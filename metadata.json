@@ -1,0 +1,6 @@
+{
+  "name": "EnterpriseIQ",
+  "description": "AI-Powered Enterprise Knowledge Management System Using Retrieval-Augmented Generation (RAG)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
