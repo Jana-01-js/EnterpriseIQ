@@ -11,20 +11,24 @@ export const BookmarksPage: React.FC = () => {
 
   const [bookmarkedDocs, setBookmarkedDocs] = useState<DocumentItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     // Load documents and simulate bookmarked set
-    api.getDocuments()
+    api.getBookmarks()
       .then(docs => {
         // Default to first 3 docs as bookmarked for demo
-        setBookmarkedDocs(docs.slice(0, 3));
+        setBookmarkedDocs(docs);
       })
-      .catch(console.error)
+      .catch(err => setError(err.message))
       .finally(() => setLoading(false));
   }, []);
 
-  const handleRemoveBookmark = (docId: string) => {
-    setBookmarkedDocs(prev => prev.filter(d => d.id !== docId));
+  const handleRemoveBookmark = async (docId: string) => {
+    try {
+      await api.setBookmark(docId, false);
+      setBookmarkedDocs(prev => prev.filter(d => d.id !== docId));
+    } catch (err: any) { setError(err.message); }
   };
 
   return (
@@ -36,6 +40,7 @@ export const BookmarksPage: React.FC = () => {
         </p>
       </div>
 
+      {error && <p role="alert" className="text-red-600">{error}</p>}
       {loading ? (
         <div className="p-12 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">
           <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>

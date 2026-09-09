@@ -3,6 +3,7 @@ export type UserRole = 'ADMIN' | 'MANAGER' | 'EMPLOYEE';
 export type UserStatus = 'ACTIVE' | 'DISABLED';
 
 export interface User {
+  preferences?: { citations: boolean; suggestions: boolean };
   id: string;
   name: string;
   email: string;

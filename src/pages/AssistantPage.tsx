@@ -370,7 +370,7 @@ export const AssistantPage: React.FC = () => {
                   )}
 
                   {/* Source Citations for RAG */}
-                  {msg.sources && msg.sources.length > 0 && (
+                  {user?.preferences?.citations !== false && msg.sources && msg.sources.length > 0 && (
                     <div className="pt-3 border-t border-slate-200/80 space-y-2">
                       <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
                         <FileText className="w-3.5 h-3.5 text-blue-600" />
@@ -407,7 +407,7 @@ export const AssistantPage: React.FC = () => {
                   )}
 
                   {/* Suggested Follow-up Questions */}
-                  {msg.suggestedQuestions && msg.suggestedQuestions.length > 0 && (
+                  {user?.preferences?.suggestions !== false && msg.suggestedQuestions && msg.suggestedQuestions.length > 0 && (
                     <div className="pt-3 border-t border-slate-200/80 space-y-1.5">
                       <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Suggested Follow-Up Questions</p>
                       <div className="flex flex-wrap gap-1.5">

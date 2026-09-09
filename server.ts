@@ -1,3 +1,8 @@
+import { config } from 'dotenv';
+import fs from 'node:fs';
+import { randomBytes } from 'node:crypto';
+config({ path: '.env.local' });
+config();
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -10,8 +15,9 @@ import { createServer as createViteServer } from 'vite';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const JWT_SECRET = process.env.JWT_SECRET || 'enterpriseiq-secure-jwt-secret-2026';
-const PORT = 3000;
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) throw new Error('JWT_SECRET is required in production');
+const JWT_SECRET = process.env.JWT_SECRET || randomBytes(48).toString('hex');
+const PORT = Number(process.env.PORT || 3000);
 
 // Initialize Gemini Client server-side if key present
 const getGeminiClient = () => {
@@ -41,6 +47,8 @@ interface DBUser {
   status: 'ACTIVE' | 'DISABLED';
   lastActive: string;
   createdAt: string;
+  bookmarks?: string[];
+  preferences?: { citations: boolean; suggestions: boolean };
 }
 
 interface DBDepartment {
@@ -559,6 +567,28 @@ const auditLogs: DBAuditLog[] = [
   },
 ];
 
+// Single-process durable store. Fail startup on corrupt data rather than overwrite it.
+const dataFile = path.resolve(process.env.DATA_FILE || 'data/enterpriseiq.json');
+if (fs.existsSync(dataFile)) {
+  const saved = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+  for (const key of ['users', 'documents', 'departments', 'conversations', 'chatMessages', 'auditLogs']) {
+    if (!Array.isArray(saved[key])) throw new Error('Invalid data store: ' + key);
+  }
+  users.splice(0, users.length, ...saved.users);
+  documents.splice(0, documents.length, ...saved.documents);
+  departments.splice(0, departments.length, ...saved.departments);
+  conversations.splice(0, conversations.length, ...saved.conversations);
+  chatMessages.splice(0, chatMessages.length, ...saved.chatMessages);
+  auditLogs.splice(0, auditLogs.length, ...saved.auditLogs);
+  chunks.splice(0);
+  documents.forEach(processDocIntoChunks);
+}
+function persistData() {
+  fs.mkdirSync(path.dirname(dataFile), { recursive: true });
+  fs.writeFileSync(dataFile + '.tmp', JSON.stringify({ users, documents, departments, conversations, chatMessages, auditLogs }));
+  fs.renameSync(dataFile + '.tmp', dataFile);
+}
+
 // Log helper
 const logAudit = (userId: string, userName: string, userRole: string, action: string, resource: string, details?: string) => {
   auditLogs.unshift({
@@ -647,7 +677,19 @@ const calculateSimilarityScore = (query: string, chunk: DBChunk): number => {
 
 // --- SETUP EXPRESS APP ---
 const app = express();
-app.use(express.json({ limit: '25mb' }));
+app.disable('x-powered-by');
+app.use(express.json({ limit: '2mb' }));
+app.use('/api', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  const originalJson = res.json.bind(res);
+  res.json = ((body: unknown) => {
+    if (res.statusCode < 400) persistData();
+    return originalJson(body);
+  }) as typeof res.json;
+  next();
+});
+app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
 // Set up Multer for memory upload handling
 const storage = multer.memoryStorage();
@@ -658,7 +700,7 @@ const upload = multer({ limits: { fileSize: 20 * 1024 * 1024 } }); // 20MB limit
 // Auth Login
 app.post('/api/auth/login', (req, res) => {
   const { email, password } = req.body;
-  if (!email) {
+  if (typeof email !== 'string' || typeof password !== 'string' || !password) {
     return res.status(400).json({ error: 'Email is required' });
   }
 
@@ -671,7 +713,7 @@ app.post('/api/auth/login', (req, res) => {
     return res.status(403).json({ error: 'This user account has been disabled by an administrator.' });
   }
 
-  if (password && !bcrypt.compareSync(password, user.passwordHash)) {
+  if (!bcrypt.compareSync(password, user.passwordHash)) {
     return res.status(401).json({ error: 'Invalid email or password' });
   }
 
@@ -688,8 +730,8 @@ app.post('/api/auth/login', (req, res) => {
 app.post('/api/auth/register', (req, res) => {
   const { name, email, password, departmentId } = req.body;
 
-  if (!name || !email || !departmentId) {
-    return res.status(400).json({ error: 'Name, email, and department are required' });
+  if (typeof name !== 'string' || !name.trim() || typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || typeof password !== 'string' || password.length < 8 || !departments.some(d => d.id === departmentId)) {
+    return res.status(400).json({ error: 'Valid name, email, department and a password of at least 8 characters are required' });
   }
 
   const existing = users.find(u => u.email.toLowerCase() === email.toLowerCase());
@@ -702,7 +744,7 @@ app.post('/api/auth/register', (req, res) => {
     id: `usr-${Date.now()}`,
     name,
     email,
-    passwordHash: bcrypt.hashSync(password || 'default123', 10),
+    passwordHash: bcrypt.hashSync(password, 10),
     role: 'EMPLOYEE', // Standard register is strictly EMPLOYEE
     departmentId: dep.id,
     departmentName: dep.name,
@@ -729,6 +771,7 @@ app.get('/api/auth/me', authenticateToken, (req: AuthenticatedRequest, res) => {
 
 // User Management (Admin only)
 app.get('/api/users', authenticateToken, (req: AuthenticatedRequest, res) => {
+  if (req.user?.role !== 'ADMIN') return res.status(403).json({ error: 'Administrator permissions required' });
   const cleanUsers = users.map(({ passwordHash, ...u }) => u);
   res.json(cleanUsers);
 });
@@ -744,6 +787,8 @@ app.put('/api/users/:id', authenticateToken, (req: AuthenticatedRequest, res) =>
   }
 
   const { role, departmentId, status } = req.body;
+  if ((role && !['ADMIN', 'MANAGER', 'EMPLOYEE'].includes(role)) || (status && !['ACTIVE', 'DISABLED'].includes(status)) || (departmentId && !departments.some(d => d.id === departmentId))) return res.status(400).json({ error: 'Invalid user update' });
+  if (targetUser.role === 'ADMIN' && targetUser.status === 'ACTIVE' && ((role && role !== 'ADMIN') || status === 'DISABLED') && users.filter(u => u.role === 'ADMIN' && u.status === 'ACTIVE').length === 1) return res.status(409).json({ error: 'Keep at least one active administrator' });
   if (role && ['ADMIN', 'MANAGER', 'EMPLOYEE'].includes(role)) {
     targetUser.role = role;
   }
@@ -762,6 +807,40 @@ app.put('/api/users/:id', authenticateToken, (req: AuthenticatedRequest, res) =>
 
   const { passwordHash, ...userClean } = targetUser;
   res.json(userClean);
+});
+
+const canReadDocument = (user: DBUser, doc: DBDocument) => checkChunkPermission(user, doc as unknown as DBChunk);
+
+app.put('/api/auth/profile', authenticateToken, (req: AuthenticatedRequest, res) => {
+  const { name, preferences } = req.body;
+  if (typeof name !== 'string' || !name.trim() || name.length > 120 ||
+      !preferences || typeof preferences.citations !== 'boolean' || typeof preferences.suggestions !== 'boolean') {
+    return res.status(400).json({ error: 'A name and valid preferences are required' });
+  }
+  req.user!.name = name.trim();
+  req.user!.preferences = { citations: preferences.citations, suggestions: preferences.suggestions };
+  const { passwordHash, ...user } = req.user!;
+  res.json(user);
+});
+app.put('/api/auth/password', authenticateToken, (req: AuthenticatedRequest, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (typeof currentPassword !== 'string' || typeof newPassword !== 'string' || newPassword.length < 8 || newPassword.length > 72) return res.status(400).json({ error: 'Use a new password between 8 and 72 characters' });
+  if (!bcrypt.compareSync(currentPassword, req.user!.passwordHash)) return res.status(400).json({ error: 'Current password is incorrect' });
+  req.user!.passwordHash = bcrypt.hashSync(newPassword, 10);
+  logAudit(req.user!.id, req.user!.name, req.user!.role, 'PASSWORD_CHANGE', 'Account');
+  res.json({ message: 'Password updated' });
+});
+app.get('/api/bookmarks', authenticateToken, (req: AuthenticatedRequest, res) => {
+  res.json(documents.filter(d => req.user!.bookmarks?.includes(d.id) && canReadDocument(req.user!, d)));
+});
+app.put('/api/bookmarks/:id', authenticateToken, (req: AuthenticatedRequest, res) => {
+  const doc = documents.find(d => d.id === req.params.id);
+  if (!doc || !canReadDocument(req.user!, doc)) return res.status(404).json({ error: 'Document unavailable' });
+  if (typeof req.body.saved !== 'boolean') return res.status(400).json({ error: 'saved must be a boolean' });
+  const ids = new Set(req.user!.bookmarks || []);
+  if (req.body.saved) ids.add(doc.id); else ids.delete(doc.id);
+  req.user!.bookmarks = [...ids];
+  res.json({ saved: req.body.saved });
 });
 
 // Departments
@@ -814,20 +893,24 @@ app.post('/api/documents/upload', authenticateToken, upload.single('file'), (req
     return res.status(400).json({ error: 'Title and department are required' });
   }
 
-  const dep = departments.find(d => d.id === departmentId) || departments[0];
+  const dep = departments.find(d => d.id === departmentId);
+  if (!dep || typeof title !== 'string' || title.length > 200) return res.status(400).json({ error: 'Valid title and department required' });
+  if (user.role !== 'ADMIN' && departmentId !== user.departmentId) return res.status(403).json({ error: 'Upload to your assigned department' });
+  if (accessLevel && !['Public', 'Department only', 'Managers only', 'Restricted'].includes(accessLevel)) return res.status(400).json({ error: 'Invalid access level' });
+  if (user.role === 'EMPLOYEE' && accessLevel === 'Managers only') return res.status(403).json({ error: 'Manager permissions required' });
   const fileExt = file ? file.originalname.split('.').pop()?.toUpperCase() : 'TXT';
   let inferredFileType: any = 'TXT';
   if (['PDF', 'DOCX', 'TXT', 'CSV', 'MD'].includes(fileExt || '')) {
     inferredFileType = fileExt === 'MD' ? 'Markdown' : fileExt;
   }
 
-  let finalContent = textContent || '';
-  if (file) {
+  if (file && !['PDF', 'DOCX', 'TXT', 'CSV', 'MD'].includes(fileExt || '')) return res.status(400).json({ error: 'Unsupported file type' });
+  if (file && ['PDF', 'DOCX'].includes(fileExt || '') && (typeof textContent !== 'string' || !textContent.trim())) return res.status(400).json({ error: 'PDF and DOCX require extracted plain text in the text content field' });
+  let finalContent = typeof textContent === 'string' ? textContent : '';
+  if (file && !['PDF', 'DOCX'].includes(fileExt || '')) {
     finalContent = file.buffer.toString('utf-8');
-    if (!finalContent || finalContent.trim().length === 0) {
-      finalContent = `Uploaded Document: ${title}\nDepartment: ${dep.name}\n\nThis document contains structured knowledge content processed for EnterpriseIQ vector indexing.`;
-    }
   }
+  if (!finalContent.trim() || finalContent.includes('\u0000')) return res.status(400).json({ error: 'Readable document text is required' });
 
   const parsedTags = typeof tags === 'string' ? tags.split(',').map(t => t.trim()).filter(Boolean) : (Array.isArray(tags) ? tags : [dep.name]);
 
@@ -876,7 +959,7 @@ app.get('/api/documents/:id', authenticateToken, (req: AuthenticatedRequest, res
   }
 
   const docChunks = chunks.filter(c => c.documentId === doc.id);
-  res.json({ ...doc, chunks: docChunks });
+  res.json({ ...doc, chunks: docChunks, isBookmarked: user.bookmarks?.includes(doc.id) || false });
 });
 
 app.delete('/api/documents/:id', authenticateToken, (req: AuthenticatedRequest, res) => {
@@ -936,6 +1019,8 @@ app.post('/api/documents/:id/summary', authenticateToken, async (req: Authentica
   const doc = documents.find(d => d.id === req.params.id);
   if (!doc) return res.status(404).json({ error: 'Document not found' });
 
+  if (!canReadDocument(req.user!, doc)) return res.status(403).json({ error: 'Document access denied' });
+
   const gemini = getGeminiClient();
   if (gemini) {
     try {
@@ -957,7 +1042,7 @@ app.post('/api/search', authenticateToken, (req: AuthenticatedRequest, res) => {
   const user = req.user!;
   const { query, departmentId, fileType, accessLevel } = req.body;
 
-  if (!query || query.trim().length === 0) {
+  if (typeof query !== 'string' || query.length > 4000 || query.trim().length === 0) {
     return res.json({ results: [] });
   }
 
@@ -1015,6 +1100,8 @@ app.post('/api/chat/compare', authenticateToken, async (req: AuthenticatedReques
     return res.status(400).json({ error: 'Two valid documents must be selected for comparison' });
   }
 
+  if (!canReadDocument(user, doc1) || !canReadDocument(user, doc2)) return res.status(403).json({ error: 'Document access denied' });
+
   const gemini = getGeminiClient();
   if (gemini) {
     try {
@@ -1039,10 +1126,12 @@ app.post('/api/chat', authenticateToken, async (req: AuthenticatedRequest, res) 
   const user = req.user!;
   const { question, conversationId, scopedDocumentId } = req.body;
 
-  if (!question || !question.trim()) {
+  if (typeof question !== 'string' || question.length > 4000 || !question.trim()) {
     return res.status(400).json({ error: 'Question is required' });
   }
 
+  if (conversationId && !conversations.some(c => c.id === conversationId && c.userId === user.id)) return res.status(404).json({ error: 'Conversation not found' });
+  if (scopedDocumentId && !documents.some(d => d.id === scopedDocumentId && canReadDocument(user, d))) return res.status(404).json({ error: 'Document unavailable' });
   // Find or create conversation
   let conv = conversations.find(c => c.id === conversationId && c.userId === user.id);
   if (!conv) {
@@ -1202,7 +1291,7 @@ Rules:
 app.get('/api/chat/history', authenticateToken, (req: AuthenticatedRequest, res) => {
   const user = req.user!;
   const userConvs = conversations.filter(c => c.userId === user.id).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-  res.json(userConvs);
+  res.json(userConvs.map(c => ({ ...c, messageCount: chatMessages.filter(m => m.conversationId === c.id).length })));
 });
 
 app.get('/api/chat/:id', authenticateToken, (req: AuthenticatedRequest, res) => {
@@ -1212,7 +1301,12 @@ app.get('/api/chat/:id', authenticateToken, (req: AuthenticatedRequest, res) => 
     return res.status(404).json({ error: 'Conversation not found' });
   }
 
-  const msgs = chatMessages.filter(m => m.conversationId === conv.id);
+  const msgs = chatMessages.filter(m => m.conversationId === conv.id).map(m => {
+    if (m.sources?.some(source => !documents.some(d => d.id === source.documentId && canReadDocument(user, d)))) {
+      return { ...m, content: 'This answer references documents that are no longer available to your account.', sources: [], relatedDocuments: [], suggestedQuestions: [] };
+    }
+    return m;
+  });
   res.json({ conversation: conv, messages: msgs });
 });
 
@@ -1233,57 +1327,45 @@ app.delete('/api/chat/:id', authenticateToken, (req: AuthenticatedRequest, res) 
 
 // SYSTEM ANALYTICS
 app.get('/api/analytics', authenticateToken, (req: AuthenticatedRequest, res) => {
-  const docsByDep = departments.map(dep => ({
-    department: dep.name,
-    count: documents.filter(d => d.departmentId === dep.id).length,
-  }));
-
-  const docsByType = [
-    { type: 'PDF', count: documents.filter(d => d.fileType === 'PDF').length },
-    { type: 'DOCX', count: documents.filter(d => d.fileType === 'DOCX').length },
-    { type: 'TXT', count: documents.filter(d => d.fileType === 'TXT').length },
-    { type: 'CSV', count: documents.filter(d => d.fileType === 'CSV').length },
-    { type: 'Markdown', count: documents.filter(d => d.fileType === 'Markdown').length },
-  ];
-
-  const queriesOverTime = [
-    { date: 'Mon', queries: 42 },
-    { date: 'Tue', queries: 68 },
-    { date: 'Wed', queries: 95 },
-    { date: 'Thu', queries: 120 },
-    { date: 'Fri', queries: 84 },
-    { date: 'Sat', queries: 25 },
-    { date: 'Sun', queries: 38 },
-  ];
-
-  const popularTopics = [
-    { topic: 'Leave Policy & PTO', count: 142 },
-    { topic: 'WireGuard VPN Setup', count: 98 },
-    { topic: 'Cybersecurity 2FA', count: 76 },
-    { topic: 'Meal & Expense Cap', count: 64 },
-    { topic: 'Sprint Code Reviews', count: 52 },
-    { topic: 'ISO 27001 Audit', count: 39 },
-  ];
-
+  const visibleDocs = documents.filter(d => canReadDocument(req.user!, d));
+  const visibleLogs = req.user!.role === 'ADMIN' ? auditLogs : auditLogs.filter(a => a.userId === req.user!.id);
+  const today = new Date().toISOString().slice(0, 10);
+  const queriesOverTime = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(Date.now() - (6 - index) * 86400000).toISOString().slice(0, 10);
+    return { date, queries: visibleLogs.filter(a => a.action === 'AI_QUERY' && a.timestamp.startsWith(date)).length };
+  });
+  const convIds = new Set(conversations.filter(c => req.user!.role === 'ADMIN' || c.userId === req.user!.id).map(c => c.id));
+  const answers = chatMessages.filter(m => m.sender === 'assistant' && convIds.has(m.conversationId));
+  const topics = new Map<string, number>();
+  visibleLogs.filter(a => a.action === 'SEARCH').forEach(a => {
+    const topic = a.details?.match(/Query: "([^"]+)"/)?.[1];
+    if (topic) topics.set(topic, (topics.get(topic) || 0) + 1);
+  });
   res.json({
-    totalDocuments: documents.length,
-    indexedDocuments: documents.filter(d => d.status === 'Indexed').length,
-    totalUsers: users.length,
-    knowledgeQueries: auditLogs.filter(a => a.action === 'AI_QUERY').length + 380,
-    docsAddedThisMonth: 8,
-    avgRetrievalScore: 94.2,
-    activeUsersToday: users.filter(u => u.status === 'ACTIVE').length,
+    totalDocuments: visibleDocs.length,
+    indexedDocuments: visibleDocs.filter(d => d.status === 'Indexed').length,
+    totalUsers: req.user!.role === 'ADMIN' ? users.length : 1,
+    knowledgeQueries: visibleLogs.filter(a => a.action === 'AI_QUERY').length,
+    docsAddedThisMonth: visibleDocs.filter(d => d.uploadedAt.startsWith(today.slice(0, 7))).length,
+    avgRetrievalScore: answers.length ? Math.round(answers.reduce((n, m) => n + (m.sourceRelevance || 0), 0) / answers.length) : 0,
+    activeUsersToday: users.filter(u => (req.user!.role === 'ADMIN' || u.id === req.user!.id) && u.status === 'ACTIVE' && u.lastActive.startsWith(today)).length,
     queriesOverTime,
-    documentsByDepartment: docsByDep,
-    documentsByType: docsByType,
-    popularSearchTopics: popularTopics,
-    recentActivity: auditLogs.slice(0, 10),
+    documentsByDepartment: departments.map(d => ({ department: d.name, count: visibleDocs.filter(doc => doc.departmentId === d.id).length })),
+    documentsByType: ['PDF', 'DOCX', 'TXT', 'CSV', 'Markdown'].map(type => ({ type, count: visibleDocs.filter(d => d.fileType === type).length })),
+    popularSearchTopics: [...topics].map(([topic, count]) => ({ topic, count })).sort((a, b) => b.count - a.count).slice(0, 10),
+    recentActivity: visibleLogs.slice(0, 10),
   });
 });
 
 // SYSTEM AUDIT LOGS
 app.get('/api/audit-logs', authenticateToken, (req: AuthenticatedRequest, res) => {
-  res.json(auditLogs);
+  res.json(req.user!.role === 'ADMIN' ? auditLogs : auditLogs.filter(a => a.userId === req.user!.id));
+});
+
+app.use('/api', (_req, res) => res.status(404).json({ error: 'API endpoint not found' }));
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error(err);
+  res.status(err instanceof multer.MulterError ? 400 : 500).json({ error: err instanceof multer.MulterError ? err.message : 'Unable to complete request' });
 });
 
 // --- VITE MIDDLEWARE & STATIC SERVING ---
@@ -1296,6 +1378,7 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
+    app.use('/EnterpriseIQ', express.static(distPath));
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

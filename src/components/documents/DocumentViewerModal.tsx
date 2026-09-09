@@ -136,6 +136,13 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({ docume
               {summarizing ? 'Generating...' : 'AI Summarize'}
             </button>
 
+            {doc && <button className="px-3 py-1.5 rounded-lg border text-xs" onClick={async () => {
+              try {
+                const saved = !doc.isBookmarked;
+                await api.setBookmark(doc.id, saved);
+                setDoc({ ...doc, isBookmarked: saved });
+              } catch (err: any) { setError(err.message); }
+            }}>{doc.isBookmarked ? 'Remove bookmark' : 'Save bookmark'}</button>}
             {doc && onAskThisDocument && (
               <button
                 onClick={() => {

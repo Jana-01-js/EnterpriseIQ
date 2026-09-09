@@ -4,6 +4,7 @@ import { api } from '../services/api';
 
 interface AuthContextType {
   user: User | null;
+  isAuthenticated: boolean;
   loading: boolean;
   login: (credentials: LoginCredentials) => Promise<void>;
   loginAsDemo: (email: string) => Promise<void>;
@@ -57,7 +58,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginAsDemo = async (email: string) => {
     setLoading(true);
     try {
-      const res = await api.login({ email });
+      const passwords: Record<string, string> = { 'admin@enterpriseiq.com': 'admin123', 'manager@enterpriseiq.com': 'manager123', 'employee@enterpriseiq.com': 'employee123' };
+      const res = await api.login({ email, password: passwords[email] });
       localStorage.setItem('eiq_auth_token', res.token);
       setUser(res.user);
     } finally {
@@ -98,6 +100,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <AuthContext.Provider
       value={{
         user,
+        isAuthenticated: !!user,
         loading,
         login,
         loginAsDemo,

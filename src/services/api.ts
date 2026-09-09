@@ -21,7 +21,18 @@ const getAuthHeaders = () => {
   };
 };
 
+async function accountRequest(url: string, method = 'GET', body?: unknown) {
+  const res = await fetch(url, { method, headers: getAuthHeaders(), ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
 export const api = {
+  updateProfile: (name: string, preferences: { citations: boolean; suggestions: boolean }): Promise<User> => accountRequest('/api/auth/profile', 'PUT', { name, preferences }),
+  changePassword: (currentPassword: string, newPassword: string) => accountRequest('/api/auth/password', 'PUT', { currentPassword, newPassword }),
+  getBookmarks: (): Promise<DocumentItem[]> => accountRequest('/api/bookmarks'),
+  setBookmark: (id: string, saved: boolean) => accountRequest('/api/bookmarks/' + encodeURIComponent(id), 'PUT', { saved }),
   // Auth
   login: async (credentials: LoginCredentials): Promise<AuthResponse> => {
     const res = await fetch('/api/auth/login', {

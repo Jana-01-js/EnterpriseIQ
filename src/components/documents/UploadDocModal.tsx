@@ -54,16 +54,13 @@ export const UploadDocModal: React.FC<UploadDocModalProps> = ({ departments, onC
         formData.append('file', selectedFile);
       }
 
-      setTimeout(() => setStatusStep('extracting'), 600);
-      setTimeout(() => setStatusStep('vectorizing'), 1200);
+
 
       await api.uploadDocument(formData);
 
       setStatusStep('indexed');
-      setTimeout(() => {
-        onSuccess();
-        onClose();
-      }, 800);
+      onSuccess();
+      onClose();
     } catch (err: any) {
       setError(err.message || 'Failed to upload document');
       setStatusStep('idle');
@@ -84,7 +81,7 @@ export const UploadDocModal: React.FC<UploadDocModalProps> = ({ departments, onC
             </div>
             <div>
               <h2 className="text-lg font-bold text-white tracking-tight">Upload Enterprise Document</h2>
-              <p className="text-xs text-slate-400">Index organizational knowledge into the vector database for RAG retrieval</p>
+              <p className="text-xs text-slate-400">Add organizational knowledge for document search and the assistant</p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 text-slate-400 hover:text-white rounded-lg transition-colors">
@@ -216,7 +213,7 @@ export const UploadDocModal: React.FC<UploadDocModalProps> = ({ departments, onC
               rows={3}
               value={textContent}
               onChange={(e) => setTextContent(e.target.value)}
-              placeholder="Paste text guidelines directly if no file is uploaded..."
+              placeholder="Paste document text here. Required for PDF and DOCX files."
               className="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -248,7 +245,7 @@ export const UploadDocModal: React.FC<UploadDocModalProps> = ({ departments, onC
               disabled={uploading}
               className="px-5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs transition-colors disabled:opacity-50 flex items-center gap-2"
             >
-              {uploading ? 'Processing & Vectorizing...' : 'Upload & Index Knowledge'}
+              {uploading ? 'Uploading & Indexing...' : 'Upload & Index Knowledge'}
             </button>
           </div>
         </form>
