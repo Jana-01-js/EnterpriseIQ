@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Upload, FileText, CheckCircle2, AlertCircle, Building2, Shield, Tag } from 'lucide-react';
+import { X, Upload, FileText, CheckCircle2, AlertCircle, Building2, Shield, Tag, Sparkles, Wand2 } from 'lucide-react';
 import { api } from '../../services/api';
 import { Department, AccessLevel } from '../../types';
 
@@ -18,6 +18,8 @@ export const UploadDocModal: React.FC<UploadDocModalProps> = ({ departments, onC
   const [textContent, setTextContent] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [aiClassifying, setAiClassifying] = useState(false);
+  const [aiSuccessMsg, setAiSuccessMsg] = useState('');
   const [statusStep, setStatusStep] = useState<'idle' | 'uploading' | 'extracting' | 'vectorizing' | 'indexed'>('idle');
   const [error, setError] = useState('');
 
@@ -28,6 +30,47 @@ export const UploadDocModal: React.FC<UploadDocModalProps> = ({ departments, onC
       if (!title) {
         setTitle(file.name.replace(/\.[^/.]+$/, '').replace(/_/g, ' '));
       }
+
+      // If it's a plain text/markdown file, read into textContent for immediate AI parsing
+      if (file.type.includes('text') || file.name.endsWith('.md') || file.name.endsWith('.txt') || file.name.endsWith('.csv')) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          if (event.target?.result) {
+            setTextContent(event.target.result as string);
+          }
+        };
+        reader.readAsText(file);
+      }
+    }
+  };
+
+  const handleAiAutoFill = async () => {
+    const contentToAnalyze = textContent.trim() || title.trim();
+    if (!contentToAnalyze && !selectedFile) {
+      setError('Please paste document text or upload a file first to analyze with AI.');
+      return;
+    }
+
+    setAiClassifying(true);
+    setError('');
+    setAiSuccessMsg('');
+
+    try {
+      const res = await api.suggestMetadata(contentToAnalyze || 'Enterprise Policy', selectedFile?.name);
+      if (res.title) setTitle(res.title);
+      if (res.description) setDescription(res.description);
+      if (res.departmentId && departments.some(d => d.id === res.departmentId)) {
+        setDepartmentId(res.departmentId);
+      }
+      if (res.accessLevel) setAccessLevel(res.accessLevel);
+      if (res.tags && res.tags.length > 0) setTags(res.tags.join(', '));
+
+      setAiSuccessMsg('AI successfully classified document, target department, access level, and tags!');
+      setTimeout(() => setAiSuccessMsg(''), 4000);
+    } catch (err: any) {
+      setError(err.message || 'AI Auto-Fill could not infer metadata');
+    } finally {
+      setAiClassifying(false);
     }
   };
 
@@ -53,8 +96,6 @@ export const UploadDocModal: React.FC<UploadDocModalProps> = ({ departments, onC
       if (selectedFile) {
         formData.append('file', selectedFile);
       }
-
-
 
       await api.uploadDocument(formData);
 
@@ -95,6 +136,35 @@ export const UploadDocModal: React.FC<UploadDocModalProps> = ({ departments, onC
             <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{error}</span>
+            </div>
+          )}
+
+          {/* AI Auto-Fill Helper Card */}
+          <div className="p-3.5 bg-gradient-to-r from-indigo-50/90 via-blue-50/80 to-purple-50/90 border border-indigo-200 rounded-xl flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-1.5 bg-indigo-600 text-white rounded-lg shrink-0">
+                <Sparkles className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-indigo-950">Gemini 3.8 Auto-Classifier</p>
+                <p className="text-[11px] text-indigo-700/80">Paste content or pick a file, then click Auto-Fill to populate department, access level & tags.</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleAiAutoFill}
+              disabled={aiClassifying}
+              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition-colors shadow-xs flex items-center gap-1.5 shrink-0 disabled:opacity-50"
+            >
+              <Wand2 className={`w-3.5 h-3.5 ${aiClassifying ? 'animate-spin' : ''}`} />
+              <span>{aiClassifying ? 'Classifying...' : 'Auto-Fill with AI'}</span>
+            </button>
+          </div>
+
+          {aiSuccessMsg && (
+            <div className="p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{aiSuccessMsg}</span>
             </div>
           )}
 

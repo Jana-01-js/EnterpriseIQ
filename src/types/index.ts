@@ -138,6 +138,74 @@ export interface SystemAnalytics {
   documentsByType: { type: string; count: number }[];
   popularSearchTopics: { topic: string; count: number }[];
   recentActivity: AuditLog[];
+  topSearchTopics: { topic: string; count: number }[];
+}
+
+export interface QuizQuestion {
+  id: string;
+  question: string;
+  options: string[];
+  correctIndex: number;
+  explanation: string;
+}
+
+export interface DocumentActionItem {
+  item: string;
+  priority: 'High' | 'Medium' | 'Low';
+  deadline?: string;
+  owner?: string;
+}
+
+export interface DocumentRiskItem {
+  title: string;
+  severity: 'High' | 'Medium' | 'Low';
+  description: string;
+  recommendation: string;
+}
+
+export interface DocumentAiToolsResult {
+  mode: 'actionItems' | 'complianceRisk' | 'quiz' | 'simplify' | 'customQa';
+  actionItems?: DocumentActionItem[];
+  risks?: DocumentRiskItem[];
+  quiz?: QuizQuestion[];
+  simplified?: string;
+  qaAnswer?: string;
+}
+
+export interface SuggestedMetadata {
+  title: string;
+  description: string;
+  departmentId: string;
+  accessLevel: AccessLevel;
+  tags: string[];
+}
+
+export interface AiSearchOverview {
+  summary: string;
+  keyPoints: string[];
+  confidence: 'High' | 'Medium' | 'Low';
+  citations: { docId: string; title: string; pageNumber: number }[];
+  relatedQueries: string[];
+}
+
+export interface KnowledgeGapItem {
+  id: string;
+  topic: string;
+  departmentId: string;
+  departmentName: string;
+  severity: 'Critical' | 'Moderate' | 'Minor';
+  frequency: number;
+  description: string;
+  suggestedTitle: string;
+}
+
+export interface PolicyDraft {
+  title: string;
+  description: string;
+  departmentId: string;
+  accessLevel: AccessLevel;
+  tags: string[];
+  content: string;
 }
 
 export interface AuthResponse {
@@ -156,4 +224,60 @@ export interface RegisterData {
   email: string;
   password?: string;
   departmentId: string;
+}
+
+export type WorkTaskPriority = 'Urgent' | 'High' | 'Medium' | 'Low';
+export type WorkTaskStatus = 'Pending' | 'In Progress' | 'Completed' | 'Overdue';
+
+export interface WorkTask {
+  id: string;
+  title: string;
+  description: string;
+  departmentId: string;
+  departmentName: string;
+  relatedDocId?: string;
+  relatedDocTitle?: string;
+  estimatedMinutes: number;
+  loggedMinutes: number;
+  priority: WorkTaskPriority;
+  status: WorkTaskStatus;
+  deadline: string; // ISO date string or HH:MM
+  assignedTo: string;
+  assignedToId: string;
+  recommendedBreakMinutes: number; // e.g., 5 or 10 min break recommendation
+  completedAt?: string;
+  createdAt: string;
+}
+
+export type WorkTimeAlertSeverity = 'critical' | 'warning' | 'info' | 'success';
+export type WorkTimeAlertType =
+  | 'WORKLOAD_DEFICIT'
+  | 'APPROACHING_TASK_LIMIT'
+  | 'TASK_LIMIT_REACHED'
+  | 'TASK_OVERTIME'
+  | 'CONTINUOUS_WORK_BREAK'
+  | 'URGENT_DEADLINE'
+  | 'SHIFT_LIMIT_APPROACHING';
+
+export interface WorkTimeAlert {
+  id: string;
+  type: WorkTimeAlertType;
+  severity: WorkTimeAlertSeverity;
+  title: string;
+  message: string;
+  taskId?: string;
+  taskTitle?: string;
+  timestamp: string;
+  actionLabel?: string;
+  actionType?: 'START_TASK' | 'TAKE_BREAK' | 'EXTEND_TIME' | 'COMPLETE_TASK' | 'VIEW_TASK';
+  dismissed?: boolean;
+}
+
+export interface WorkScheduleConfig {
+  shiftStart: string; // e.g. "09:00"
+  shiftEnd: string; // e.g. "17:00"
+  shiftDurationMinutes: number; // 480 mins (8 hours)
+  breakIntervalMinutes: number; // e.g., 50 mins
+  breakDurationMinutes: number; // e.g., 10 mins
+  soundAlertsEnabled: boolean;
 }

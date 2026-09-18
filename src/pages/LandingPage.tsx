@@ -18,8 +18,14 @@ import {
 } from 'lucide-react';
 
 export const LandingPage: React.FC = () => {
-  const { loginAsDemo } = useAuth();
+  const { user, isAuthenticated, loginAsDemo } = useAuth();
   const navigate = useNavigate();
+
+  React.useEffect(() => {
+    if (isAuthenticated) {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [isAuthenticated, navigate]);
 
   const handleDemoClick = async (email: string) => {
     await loginAsDemo(email);
@@ -40,7 +46,10 @@ export const LandingPage: React.FC = () => {
             </div>
             <div>
               <span className="font-extrabold text-lg tracking-tight">
-                Enterprise<span className="text-blue-400">IQ</span>
+                Enterprise<span className="text-blue-400">IQ</span><span className="text-sky-400 text-sm font-semibold font-mono">.fp.JKKN</span>
+              </span>
+              <span className="ml-2 text-[11px] font-mono text-slate-400 font-bold hidden sm:inline">
+                /dashboard
               </span>
               <span className="ml-2 text-[10px] font-bold bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded border border-blue-400/30">
                 RAG System
@@ -49,6 +58,12 @@ export const LandingPage: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-4">
+            <button
+              onClick={() => handleDemoClick('admin@enterpriseiq.com')}
+              className="text-xs font-semibold text-sky-400 hover:text-sky-300 transition-colors hidden sm:block"
+            >
+              Quick Demo Access
+            </button>
             <Link
               to="/login"
               className="text-xs font-semibold text-slate-300 hover:text-white transition-colors"
@@ -56,10 +71,10 @@ export const LandingPage: React.FC = () => {
               Sign In
             </Link>
             <Link
-              to="/login"
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs rounded-xl shadow-lg shadow-blue-600/30 transition-all flex items-center gap-2"
+              to="/dashboard"
+              className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold text-xs rounded-xl shadow-lg shadow-blue-600/30 transition-all flex items-center gap-2"
             >
-              <span>Get Started</span>
+              <span>Open Dashboard</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </Link>
           </div>

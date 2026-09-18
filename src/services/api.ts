@@ -11,6 +11,12 @@ import {
   SystemAnalytics,
   AuditLog,
   Department,
+  DocumentAiToolsResult,
+  SuggestedMetadata,
+  AiSearchOverview,
+  KnowledgeGapItem,
+  PolicyDraft,
+  WorkTask,
 } from '../types';
 
 const getAuthHeaders = () => {
@@ -221,5 +227,109 @@ export const api = {
     const res = await fetch('/api/audit-logs', { headers: getAuthHeaders() });
     if (!res.ok) throw new Error('Failed to fetch audit logs');
     return res.json();
+  },
+
+  // Advanced AI Features
+  executeAiTool: async (
+    docId: string,
+    mode: 'actionItems' | 'complianceRisk' | 'quiz' | 'simplify' | 'customQa',
+    question?: string
+  ): Promise<DocumentAiToolsResult> => {
+    const res = await fetch(`/api/documents/${docId}/ai-tools`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ mode, question }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'AI tool execution failed');
+    }
+    return res.json();
+  },
+
+  suggestMetadata: async (content: string, filename?: string): Promise<SuggestedMetadata> => {
+    const res = await fetch('/api/ai/suggest-metadata', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ content, filename }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Metadata suggestion failed');
+    }
+    return res.json();
+  },
+
+  getSearchAiOverview: async (query: string, results: SearchResult[]): Promise<AiSearchOverview> => {
+    const res = await fetch('/api/search/ai-overview', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ query, results }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Failed to generate AI search overview');
+    }
+    return res.json();
+  },
+
+  getKnowledgeGaps: async (): Promise<KnowledgeGapItem[]> => {
+    const res = await fetch('/api/ai/knowledge-gaps', { headers: getAuthHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch knowledge gap report');
+    return res.json();
+  },
+
+  draftPolicy: async (topic: string, departmentId: string, targetAudience?: string): Promise<PolicyDraft> => {
+    const res = await fetch('/api/ai/draft-policy', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ topic, departmentId, targetAudience }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Failed to draft policy');
+    }
+    return res.json();
+  },
+
+  saveDraftPolicy: async (draft: PolicyDraft): Promise<DocumentItem> => {
+    const formData = new FormData();
+    formData.append('title', draft.title);
+    formData.append('departmentId', draft.departmentId);
+    formData.append('description', draft.description);
+    formData.append('accessLevel', draft.accessLevel);
+    formData.append('tags', draft.tags.join(', '));
+    formData.append('textContent', draft.content);
+
+    return api.uploadDocument(formData);
+  },
+
+  // Work Tasks & Work Time
+  getWorkTasks: async (): Promise<WorkTask[]> => accountRequest('/api/work-tasks'),
+  
+  createWorkTask: async (task: Partial<WorkTask>): Promise<WorkTask> => {
+    return accountRequest('/api/work-tasks', 'POST', task);
+  },
+
+  updateWorkTask: async (id: string, updates: Partial<WorkTask>): Promise<WorkTask> => {
+    return accountRequest(`/api/work-tasks/${encodeURIComponent(id)}`, 'PUT', updates);
+  },
+
+  deleteWorkTask: async (id: string): Promise<{ success: boolean; id: string }> => {
+    return accountRequest(`/api/work-tasks/${encodeURIComponent(id)}`, 'DELETE');
+  },
+
+  logWorkTaskTime: async (id: string, minutes: number): Promise<WorkTask> => {
+    return accountRequest(`/api/work-tasks/${encodeURIComponent(id)}/log-time`, 'POST', { minutes });
+  },
+
+  aiEstimateWorkTime: async (title: string, description?: string, docId?: string): Promise<{
+    estimatedMinutes: number;
+    recommendedBreakMinutes: number;
+    difficulty: string;
+    reasoning: string;
+    checklistSteps: string[];
+  }> => {
+    return accountRequest('/api/work-tasks/ai-estimate-time', 'POST', { title, description, docId });
   },
 };

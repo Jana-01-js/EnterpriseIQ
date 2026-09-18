@@ -878,7 +878,7 @@ app.get('/api/documents', authenticateToken, (req: AuthenticatedRequest, res) =>
   res.json(accessibleDocs);
 });
 
-app.post('/api/documents/upload', authenticateToken, upload.single('file'), (req: AuthenticatedRequest, res) => {
+app.post('/api/documents/upload', authenticateToken, upload.single('file') as any, (req: AuthenticatedRequest, res) => {
   const user = req.user!;
   
   // Permission check: Admins and Managers can upload; Employees can upload to their department if approved
@@ -1025,7 +1025,7 @@ app.post('/api/documents/:id/summary', authenticateToken, async (req: Authentica
   if (gemini) {
     try {
       const response = await gemini.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-3.8-flash',
         contents: `Provide a concise 3-bullet enterprise executive summary of the following document:\n\nTitle: ${doc.title}\nContent:\n${doc.content.substring(0, 3000)}`,
       });
       return res.json({ summary: response.text });
@@ -1035,6 +1035,206 @@ app.post('/api/documents/:id/summary', authenticateToken, async (req: Authentica
   }
 
   res.json({ summary: doc.summary || `Executive Summary of ${doc.title}:\n- Key guidelines for ${doc.departmentName}.\n- Accessible to authorized personnel under ${doc.accessLevel} access.\n- Includes operational procedures and compliance mandates.` });
+});
+
+// ADVANCED AI DOCUMENT TOOLS (Action items, Compliance risk, Interactive Quiz, Plain English Simplifier, Grounded Q&A)
+app.post('/api/documents/:id/ai-tools', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  const user = req.user!;
+  const doc = documents.find(d => d.id === req.params.id);
+  if (!doc) return res.status(404).json({ error: 'Document not found' });
+  if (!canReadDocument(user, doc)) return res.status(403).json({ error: 'Document access denied' });
+
+  const { mode, question } = req.body;
+  const gemini = getGeminiClient();
+
+  if (mode === 'actionItems') {
+    if (gemini) {
+      try {
+        const prompt = `Analyze the following enterprise policy and extract 3 to 5 concrete, actionable tasks/responsibilities required for employees or managers.
+Return pure JSON in the exact format:
+[
+  { "item": "action description", "priority": "High" | "Medium" | "Low", "deadline": "timeframe or condition", "owner": "responsible role" }
+]
+No markdown formatting, just the raw JSON array.
+Document Title: ${doc.title}
+Content:
+${doc.content.substring(0, 4000)}`;
+
+        const response = await gemini.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: prompt,
+        });
+        const cleaned = (response.text || '').replace(/```json/g, '').replace(/```/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return res.json({ mode: 'actionItems', actionItems: parsed });
+        }
+      } catch (e) {
+        console.error('Gemini actionItems error:', e);
+      }
+    }
+
+    const sampleItems = [
+      { item: `Review specific policy clauses in ${doc.title}`, priority: 'High', deadline: 'Within 14 days of release', owner: `${doc.departmentName} Personnel` },
+      { item: `Submit required authorizations prior to operational requests`, priority: 'High', deadline: '5 working days in advance', owner: 'Employee & Manager' },
+      { item: `Retain supporting documentation and receipts for audit tracking`, priority: 'Medium', deadline: 'Ongoing compliance', owner: 'Department Coordinator' },
+      { item: `Escalate exceptions or protocol ambiguities to department leadership`, priority: 'Low', deadline: 'Within 48 hours of occurrence', owner: 'All Team Members' },
+    ];
+    return res.json({ mode: 'actionItems', actionItems: sampleItems });
+  }
+
+  if (mode === 'complianceRisk') {
+    if (gemini) {
+      try {
+        const prompt = `Perform a corporate compliance, legal, and operational risk assessment of this enterprise document.
+Identify 3 to 4 potential risk factors, policy loopholes, security exposures, or compliance obligations.
+Return pure JSON in the exact format:
+[
+  { "title": "short risk title", "severity": "High" | "Medium" | "Low", "description": "detailed risk explanation", "recommendation": "mitigation steps" }
+]
+No markdown formatting, just the raw JSON array.
+Document Title: ${doc.title}
+Content:
+${doc.content.substring(0, 4000)}`;
+
+        const response = await gemini.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: prompt,
+        });
+        const cleaned = (response.text || '').replace(/```json/g, '').replace(/```/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return res.json({ mode: 'complianceRisk', risks: parsed });
+        }
+      } catch (e) {
+        console.error('Gemini complianceRisk error:', e);
+      }
+    }
+
+    const fallbackRisks = [
+      { title: 'Access Classification Governance', severity: 'High', description: `Document is classified as "${doc.accessLevel}". Unauthorized redistribution outside authorized personnel breaks compliance bylaws.`, recommendation: 'Enforce access audits and prevent unauthorized sharing.' },
+      { title: 'Approval Verification Bottlenecks', severity: 'Medium', description: 'Manual sign-offs can create operational delays during quarter-end filings.', recommendation: 'Designate secondary proxy approvers with defined SLAs.' },
+      { title: 'Annual Policy Maintenance Schedule', severity: 'Low', description: 'Organizational guidelines must be re-certified annually for regulatory alignment.', recommendation: 'Schedule annual review ceremony with department stakeholders.' },
+    ];
+    return res.json({ mode: 'complianceRisk', risks: fallbackRisks });
+  }
+
+  if (mode === 'quiz') {
+    if (gemini) {
+      try {
+        const prompt = `Generate a 3-question multiple choice knowledge retention quiz based on this enterprise policy to test staff comprehension.
+Return pure JSON in the exact format:
+[
+  {
+    "id": "q1",
+    "question": "question text",
+    "options": ["Option A", "Option B", "Option C", "Option D"],
+    "correctIndex": 0,
+    "explanation": "Why this answer is correct based on the policy text"
+  }
+]
+No markdown formatting, just the raw JSON array.
+Document: ${doc.title}
+Content:
+${doc.content.substring(0, 4000)}`;
+
+        const response = await gemini.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: prompt,
+        });
+        const cleaned = (response.text || '').replace(/```json/g, '').replace(/```/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return res.json({ mode: 'quiz', quiz: parsed });
+        }
+      } catch (e) {
+        console.error('Gemini quiz error:', e);
+      }
+    }
+
+    const fallbackQuiz = [
+      {
+        id: 'q1',
+        question: `Which department primarily administers "${doc.title}"?`,
+        options: [doc.departmentName, 'Finance & Treasury', 'Global Real Estate', 'External Audit Board'],
+        correctIndex: 0,
+        explanation: `This policy is published and maintained under the ${doc.departmentName} repository.`
+      },
+      {
+        id: 'q2',
+        question: `What access classification governs this document?`,
+        options: ['General Public Unrestricted', `${doc.accessLevel} authorization`, 'Board of Directors Only', 'Unclassified Draft'],
+        correctIndex: 1,
+        explanation: `The access level is officially designated as "${doc.accessLevel}".`
+      },
+      {
+        id: 'q3',
+        question: `What is the standard procedure when executing workflows under ${doc.title}?`,
+        options: ['Immediate unilateral action without records', 'Submitting verification through established organizational workflows', 'Oral approval without timestamped logs', 'Bypassing compliance for accelerated speed'],
+        correctIndex: 1,
+        explanation: `Organizational procedures require adhering strictly to documented submission and approval channels.`
+      }
+    ];
+    return res.json({ mode: 'quiz', quiz: fallbackQuiz });
+  }
+
+  if (mode === 'simplify') {
+    if (gemini) {
+      try {
+        const prompt = `Explain this enterprise policy in plain English as an executive 60-second summary for employees. Avoid legal jargon. Use clear bullet points and bold highlights.\n\nTitle: ${doc.title}\nContent:\n${doc.content.substring(0, 3500)}`;
+        const response = await gemini.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: prompt,
+        });
+        if (response.text) {
+          return res.json({ mode: 'simplify', simplified: response.text });
+        }
+      } catch (e) {
+        console.error('Gemini simplify error:', e);
+      }
+    }
+
+    return res.json({
+      mode: 'simplify',
+      simplified: `### Plain English Executive Digest: ${doc.title}\n\n- **The Core Rule:** This document sets out the baseline standards and rules for **${doc.departmentName}**.\n- **Who It Applies To:** All personnel with **${doc.accessLevel}** clearance.\n- **Key Action:** Make sure to follow the documented approval steps before submitting requests.\n- **Need Clarification?** Reach out to your department lead or the policy author (${doc.uploadedBy}).`
+    });
+  }
+
+  if (mode === 'customQa') {
+    const q = (question || '').trim();
+    if (!q) return res.status(400).json({ error: 'Question is required' });
+
+    if (gemini) {
+      try {
+        const prompt = `You are an expert enterprise knowledge assistant.
+Answer the user's question strictly and exclusively using the document content below.
+If the answer cannot be found in the document, respond: "The provided document does not contain this specific information."
+
+DOCUMENT: ${doc.title}
+CONTENT:
+${doc.content.substring(0, 4500)}
+
+QUESTION: ${q}`;
+
+        const response = await gemini.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: prompt,
+        });
+        if (response.text) {
+          return res.json({ mode: 'customQa', qaAnswer: response.text });
+        }
+      } catch (e) {
+        console.error('Gemini customQa error:', e);
+      }
+    }
+
+    return res.json({
+      mode: 'customQa',
+      qaAnswer: `Regarding "${q}" in **${doc.title}**:\n\nBased on the document records, this document outlines guidelines for ${doc.departmentName} under ${doc.accessLevel} access. Please check the full text sections for specific clause phrasing or consult ${doc.uploadedBy}.`
+    });
+  }
+
+  return res.status(400).json({ error: 'Invalid mode' });
 });
 
 // GLOBAL SEMANTIC SEARCH
@@ -1107,7 +1307,7 @@ app.post('/api/chat/compare', authenticateToken, async (req: AuthenticatedReques
     try {
       const prompt = `Compare these two enterprise documents side-by-side in Markdown format:\n\nDOCUMENT 1: ${doc1.title}\n${doc1.content.substring(0, 2500)}\n\nDOCUMENT 2: ${doc2.title}\n${doc2.content.substring(0, 2500)}\n\nHighlight key similarities, policy differences, department scope, and compliance requirements.`;
       const response = await gemini.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-3.8-flash',
         contents: prompt,
       });
       return res.json({ comparison: response.text });
@@ -1210,7 +1410,7 @@ Rules:
         const prompt = `CONTEXT:\n${contextText}\n\nUSER QUESTION:\n${question}`;
 
         const geminiRes = await gemini.models.generateContent({
-          model: 'gemini-3.6-flash',
+          model: 'gemini-3.8-flash',
           contents: prompt,
           config: {
             systemInstruction: systemPrompt,
@@ -1325,6 +1525,268 @@ app.delete('/api/chat/:id', authenticateToken, (req: AuthenticatedRequest, res) 
   res.json({ message: 'Conversation deleted' });
 });
 
+// AI INTELLIGENCE: AUTOMATIC METADATA EXTRACTION & CLASSIFICATION
+app.post('/api/ai/suggest-metadata', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  const { content, filename } = req.body;
+  if (!content || typeof content !== 'string') {
+    return res.status(400).json({ error: 'Content is required for metadata inference' });
+  }
+
+  const gemini = getGeminiClient();
+  const availableDeptIds = departments.map(d => `${d.id} (${d.name})`).join(', ');
+
+  if (gemini) {
+    try {
+      const prompt = `You are an enterprise document intelligence parser.
+Analyze this document text and suggest standard organizational metadata.
+Available departments: ${availableDeptIds}
+Valid access levels: "Public", "Department only", "Managers only", "Restricted"
+
+Return pure JSON in the exact format:
+{
+  "title": "Clean, Professional Document Title",
+  "description": "1 to 2 sentence executive description",
+  "departmentId": "one of: dep-hr, dep-fin, dep-eng, dep-mkt, dep-ops, dep-leg, dep-it",
+  "accessLevel": "Public" | "Department only" | "Managers only" | "Restricted",
+  "tags": ["Tag1", "Tag2", "Tag3", "Tag4", "Tag5"]
+}
+No markdown formatting, just pure JSON.
+
+Document snippet:
+${content.substring(0, 3500)}`;
+
+      const response = await gemini.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: prompt,
+      });
+
+      const cleaned = (response.text || '').replace(/```json/g, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+      if (parsed.title && parsed.departmentId) {
+        return res.json(parsed);
+      }
+    } catch (e) {
+      console.error('Gemini suggest-metadata error:', e);
+    }
+  }
+
+  // Fallback heuristic inference
+  const lower = content.toLowerCase();
+  let deptId = 'dep-hr';
+  if (lower.includes('code') || lower.includes('pull request') || lower.includes('software') || lower.includes('git') || lower.includes('api')) deptId = 'dep-eng';
+  else if (lower.includes('budget') || lower.includes('expense') || lower.includes('procurement') || lower.includes('finance') || lower.includes('invoice')) deptId = 'dep-fin';
+  else if (lower.includes('cybersecurity') || lower.includes('password') || lower.includes('vpn') || lower.includes('token') || lower.includes('ssh')) deptId = 'dep-it';
+  else if (lower.includes('contract') || lower.includes('legal') || lower.includes('nda') || lower.includes('compliance') || lower.includes('law')) deptId = 'dep-leg';
+  else if (lower.includes('marketing') || lower.includes('brand') || lower.includes('social media') || lower.includes('campaign')) deptId = 'dep-mkt';
+  else if (lower.includes('logistics') || lower.includes('supply') || lower.includes('warehouse') || lower.includes('operations')) deptId = 'dep-ops';
+
+  const inferredTitle = filename
+    ? filename.replace(/\.[^/.]+$/, '').replace(/_/g, ' ')
+    : (content.split('\n')[0].replace(/^[#\s]+/, '').slice(0, 60) || 'Enterprise Organizational Policy');
+
+  res.json({
+    title: inferredTitle,
+    description: `Enterprise operational guidelines and compliance standards for ${departments.find(d => d.id === deptId)?.name || 'the organization'}.`,
+    departmentId: deptId,
+    accessLevel: 'Public',
+    tags: ['Enterprise', 'Policy', 'Guidelines', 'Compliance', 'Workflow'],
+  });
+});
+
+// AI SEARCH OVERVIEW SYNTHESIS
+app.post('/api/search/ai-overview', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  const { query, results } = req.body;
+  if (!query || !Array.isArray(results) || results.length === 0) {
+    return res.json({
+      summary: "No relevant documents found in the current permissions scope to synthesize an answer.",
+      keyPoints: [],
+      confidence: "Low",
+      citations: [],
+      relatedQueries: ["Browse all department documents", "Search remote work policy", "Search cybersecurity guidelines"]
+    });
+  }
+
+  const topResults = results.slice(0, 4);
+  const context = topResults.map((r: any, idx: number) => `[Source ${idx + 1}: "${r.documentTitle}", Page ${r.pageNumber}, Dept: ${r.departmentName}]\n${r.snippet}`).join('\n\n');
+
+  const gemini = getGeminiClient();
+  if (gemini) {
+    try {
+      const prompt = `You are the EnterpriseIQ Semantic Search Synthesis Engine.
+Given a user search query and retrieved policy excerpts, generate an executive AI Overview.
+Rules:
+1. Ground your response strictly in the provided sources.
+2. Provide a 2-3 sentence executive summary answer.
+3. Provide 3 key actionable takeaways or facts.
+4. Provide 3 related questions an employee might ask.
+
+Return pure JSON in format:
+{
+  "summary": "Executive summary paragraph answering the query directly...",
+  "keyPoints": ["Takeaway 1", "Takeaway 2", "Takeaway 3"],
+  "confidence": "High" | "Medium" | "Low",
+  "relatedQueries": ["Related query 1", "Related query 2", "Related query 3"]
+}
+No markdown wrappers, return raw JSON.
+
+QUERY: ${query}
+SOURCES:
+${context}`;
+
+      const response = await gemini.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: prompt,
+      });
+
+      const cleaned = (response.text || '').replace(/```json/g, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+      if (parsed.summary && parsed.keyPoints) {
+        return res.json({
+          ...parsed,
+          citations: topResults.map((r: any) => ({
+            docId: r.documentId,
+            title: r.documentTitle,
+            pageNumber: r.pageNumber,
+          })),
+        });
+      }
+    } catch (e) {
+      console.error('Gemini search AI overview error:', e);
+    }
+  }
+
+  // Fallback synthesis
+  const first = topResults[0];
+  res.json({
+    summary: `According to **${first.documentTitle}** (Page ${first.pageNumber}), the organizational policy specifies: "${first.snippet.slice(0, 160)}..."`,
+    keyPoints: [
+      `Primary governing policy: ${first.documentTitle} (${first.departmentName})`,
+      `Document access classification: ${first.accessLevel}`,
+      `Search relevance score: ${first.relevanceScore}%`
+    ],
+    confidence: first.relevanceScore > 75 ? 'High' : 'Medium',
+    citations: topResults.map((r: any) => ({
+      docId: r.documentId,
+      title: r.documentTitle,
+      pageNumber: r.pageNumber,
+    })),
+    relatedQueries: [
+      `Who is the designated approver for ${query}?`,
+      `Policy exceptions and escalation steps for ${query}`,
+      `Related operational workflows in ${first.departmentName}`
+    ]
+  });
+});
+
+// AI KNOWLEDGE GAPS IDENTIFIER
+app.get('/api/ai/knowledge-gaps', authenticateToken, (req: AuthenticatedRequest, res) => {
+  const gaps: any[] = [];
+  
+  departments.forEach(dept => {
+    const count = documents.filter(d => d.departmentId === dept.id).length;
+    if (count < 2) {
+      gaps.push({
+        id: `gap-${dept.id}`,
+        topic: `${dept.name} Operating Standards & Playbook`,
+        departmentId: dept.id,
+        departmentName: dept.name,
+        severity: count === 0 ? 'Critical' : 'Moderate',
+        frequency: 24,
+        description: `Only ${count} document(s) currently indexed under ${dept.name}. Staff queries targeting "${dept.popularSearches[0]}" lack documented SOPs.`,
+        suggestedTitle: `${dept.name} Core Operating Procedures & Escalation Matrix 2026`,
+      });
+    }
+  });
+
+  gaps.push({
+    id: 'gap-travel-perdiem',
+    topic: 'Global Travel & Daily Per Diem Allowance',
+    departmentId: 'dep-fin',
+    departmentName: 'Finance',
+    severity: 'Moderate',
+    frequency: 38,
+    description: 'Repeated searches for international meal limits and ride-share reimbursement rules showed low relevance matches.',
+    suggestedTitle: 'Corporate Travel, Per Diem & Expense Reimbursement Policy 2026',
+  });
+
+  gaps.push({
+    id: 'gap-ai-governance',
+    topic: 'Enterprise AI & Copilot Usage Governance',
+    departmentId: 'dep-it',
+    departmentName: 'Information Technology',
+    severity: 'Critical',
+    frequency: 45,
+    description: 'High query volume regarding permissible LLM tools, confidential code paste limits, and third-party AI compliance.',
+    suggestedTitle: 'Acceptable Use Policy for Generative AI & Autonomous Agent Tools',
+  });
+
+  res.json(gaps);
+});
+
+// AI POLICY GENERATOR & DRAFTER
+app.post('/api/ai/draft-policy', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  const user = req.user!;
+  if (user.role === 'EMPLOYEE') {
+    return res.status(403).json({ error: 'Only Managers and Administrators can draft policies' });
+  }
+
+  const { topic, departmentId, targetAudience } = req.body;
+  if (!topic || typeof topic !== 'string') {
+    return res.status(400).json({ error: 'Topic is required' });
+  }
+
+  const dept = departments.find(d => d.id === departmentId) || departments[0];
+  const gemini = getGeminiClient();
+
+  if (gemini) {
+    try {
+      const prompt = `You are a Chief Compliance Officer and Enterprise Legal Architect.
+Draft a comprehensive, highly thorough corporate policy document for the organization.
+Topic: ${topic}
+Department: ${dept.name}
+Target Audience: ${targetAudience || 'All full-time and contractual personnel'}
+
+Generate a professional, production-ready corporate policy document in pure JSON format:
+{
+  "title": "Formal Corporate Policy Title",
+  "description": "2-sentence executive summary of the policy mandate",
+  "departmentId": "${dept.id}",
+  "accessLevel": "Public",
+  "tags": ["Tag1", "Tag2", "Tag3", "Tag4", "Policy"],
+  "content": "Full markdown formatted with clear headings:\\n\\n## 1. Purpose & Scope\\n...\\n\\n## 2. Core Policy Mandates\\n...\\n\\n## 3. Approval Workflows & Thresholds\\n...\\n\\n## 4. Roles & Responsibilities\\n...\\n\\n## 5. Compliance, Auditing & Violations\\n..."
+}
+No markdown wrappers around the JSON, return raw JSON only.`;
+
+      const response = await gemini.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: prompt,
+      });
+
+      const cleaned = (response.text || '').replace(/```json/g, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+      if (parsed.title && parsed.content) {
+        logAudit(user.id, user.name, user.role, 'AI_POLICY_DRAFT', topic, `Drafted policy for ${dept.name}`);
+        return res.json(parsed);
+      }
+    } catch (e) {
+      console.error('Gemini draft policy error:', e);
+    }
+  }
+
+  // Fallback grounded policy draft
+  const fallbackDraft = {
+    title: topic.includes('Policy') ? topic : `${topic} Policy 2026`,
+    description: `Defines mandatory operational procedures, approval hierarchies, and compliance standards for ${dept.name}.`,
+    departmentId: dept.id,
+    accessLevel: 'Public' as const,
+    tags: [dept.name, 'Policy', 'Standards', 'Compliance', 'Workflow'],
+    content: `# ${topic.toUpperCase()} (ENTERPRISE STANDARD 2026)\n\n## 1. Purpose & Scope\nThis policy defines standard operating protocols for ${dept.name} across EnterpriseIQ. All full-time and contractual team members must adhere strictly to these stipulations.\n\n## 2. Core Policy Mandates\n- All actions under this policy must be initiated through the authorized organization portal.\n- Routine operational tasks must follow the documented two-factor verification steps.\n- Requests exceeding standard budget or operational thresholds require explicit Department Head sign-off.\n\n## 3. Approval Workflows & Thresholds\n- Tier 1 (< $1,000 or standard operations): Direct Manager Approval within 48 hours.\n- Tier 2 ($1,000 - $10,000 or cross-team): Department Director + Finance notification.\n- Tier 3 (> $10,000 or compliance sensitive): Executive Committee review.\n\n## 4. Roles & Responsibilities\n- **Employees:** Initiate timely requests, upload complete supporting documents, and retain audit receipts for 12 months.\n- **Managers:** Review submissions within designated SLAs and verify compliance alignment.\n- **Compliance & IT:** Conduct quarterly spot audits and maintain system access lists.\n\n## 5. Compliance & Violation Consequences\nFailure to comply with these guidelines may lead to access revocation, escalation to Human Resources, or corrective action under corporate governance bylaws.`
+  };
+
+  logAudit(user.id, user.name, user.role, 'AI_POLICY_DRAFT', topic, `Drafted fallback policy for ${dept.name}`);
+  return res.json(fallbackDraft);
+});
+
 // SYSTEM ANALYTICS
 app.get('/api/analytics', authenticateToken, (req: AuthenticatedRequest, res) => {
   const visibleDocs = documents.filter(d => canReadDocument(req.user!, d));
@@ -1360,6 +1822,312 @@ app.get('/api/analytics', authenticateToken, (req: AuthenticatedRequest, res) =>
 // SYSTEM AUDIT LOGS
 app.get('/api/audit-logs', authenticateToken, (req: AuthenticatedRequest, res) => {
   res.json(req.user!.role === 'ADMIN' ? auditLogs : auditLogs.filter(a => a.userId === req.user!.id));
+});
+
+// --- WORK TASKS & WORK TIME ALERTS SYSTEM ---
+interface DBWorkTask {
+  id: string;
+  title: string;
+  description: string;
+  departmentId: string;
+  departmentName: string;
+  relatedDocId?: string;
+  relatedDocTitle?: string;
+  estimatedMinutes: number;
+  loggedMinutes: number;
+  priority: 'Urgent' | 'High' | 'Medium' | 'Low';
+  status: 'Pending' | 'In Progress' | 'Completed' | 'Overdue';
+  deadline: string;
+  assignedTo: string;
+  assignedToId: string;
+  recommendedBreakMinutes: number;
+  completedAt?: string;
+  createdAt: string;
+}
+
+const workTasks: DBWorkTask[] = [
+  {
+    id: 'task-sec-1',
+    title: 'Verify Hardware 2FA Token & Password Rotation Compliance',
+    description: 'Perform quarterly workstation compliance check for hardware MFA and update passwords according to enterprise password policy.',
+    departmentId: 'dep-it',
+    departmentName: 'Information Technology',
+    relatedDocId: 'doc-it-cybersecurity',
+    relatedDocTitle: 'Cybersecurity & Data Protection Policy',
+    estimatedMinutes: 45,
+    loggedMinutes: 38,
+    priority: 'Urgent',
+    status: 'In Progress',
+    deadline: new Date(Date.now() + 2 * 3600000).toISOString(),
+    assignedTo: 'Alex Rivera (Employee)',
+    assignedToId: 'usr-emp-1',
+    recommendedBreakMinutes: 10,
+    createdAt: new Date(Date.now() - 86400000).toISOString(),
+  },
+  {
+    id: 'task-eng-2',
+    title: 'Conduct Q3 Engineering Pull Request SLA & CI/CD Review',
+    description: 'Audit pull request review turnaround times and ensure unit test coverage meets the mandatory 80% threshold before sprint freeze.',
+    departmentId: 'dep-eng',
+    departmentName: 'Engineering',
+    relatedDocId: 'doc-eng-guidelines',
+    relatedDocTitle: 'Engineering Code Review & Sprint Standards',
+    estimatedMinutes: 60,
+    loggedMinutes: 0,
+    priority: 'High',
+    status: 'Pending',
+    deadline: new Date(Date.now() + 4 * 3600000).toISOString(),
+    assignedTo: 'Alex Rivera (Employee)',
+    assignedToId: 'usr-emp-1',
+    recommendedBreakMinutes: 10,
+    createdAt: new Date(Date.now() - 43200000).toISOString(),
+  },
+  {
+    id: 'task-hr-3',
+    title: 'Review Annual Leave Rollover & Maternity/Paternity Protocol',
+    description: 'Read the updated 2026 PTO policy to verify parental leave benefits and 5-day year-end rollover submission deadlines.',
+    departmentId: 'dep-hr',
+    departmentName: 'Human Resources',
+    relatedDocId: 'doc-hr-leave',
+    relatedDocTitle: 'Employee Leave Policy & Benefits',
+    estimatedMinutes: 30,
+    loggedMinutes: 10,
+    priority: 'Medium',
+    status: 'In Progress',
+    deadline: new Date(Date.now() + 24 * 3600000).toISOString(),
+    assignedTo: 'Alex Rivera (Employee)',
+    assignedToId: 'usr-emp-1',
+    recommendedBreakMinutes: 5,
+    createdAt: new Date(Date.now() - 172800000).toISOString(),
+  },
+  {
+    id: 'task-fin-4',
+    title: 'Audit Global Per Diem & Meal Expense Reconciliations',
+    description: 'Audit international travel receipts against the meal cap guidelines and submit verification report to finance management.',
+    departmentId: 'dep-fin',
+    departmentName: 'Finance',
+    relatedDocId: 'doc-fin-expenses',
+    relatedDocTitle: 'Travel & Expense Reimbursement Policy',
+    estimatedMinutes: 90,
+    loggedMinutes: 0,
+    priority: 'Medium',
+    status: 'Pending',
+    deadline: new Date(Date.now() + 28 * 3600000).toISOString(),
+    assignedTo: 'David Miller (Manager)',
+    assignedToId: 'usr-mgr-1',
+    recommendedBreakMinutes: 15,
+    createdAt: new Date(Date.now() - 86400000).toISOString(),
+  },
+  {
+    id: 'task-leg-5',
+    title: 'Legal NDA & Vendor Data Processing Compliance Check',
+    description: 'Verify executed non-disclosure agreements and confirm data encryption riders with external SaaS vendors.',
+    departmentId: 'dep-leg',
+    departmentName: 'Legal',
+    relatedDocId: 'doc-leg-nda',
+    relatedDocTitle: 'Standard Non-Disclosure Agreement (NDA) Master Template',
+    estimatedMinutes: 50,
+    loggedMinutes: 50,
+    priority: 'Low',
+    status: 'Completed',
+    deadline: new Date(Date.now() - 3600000).toISOString(),
+    assignedTo: 'Sarah Connor (Admin)',
+    assignedToId: 'usr-admin-1',
+    recommendedBreakMinutes: 10,
+    completedAt: new Date(Date.now() - 1800000).toISOString(),
+    createdAt: new Date(Date.now() - 259200000).toISOString(),
+  }
+];
+
+// Get Work Tasks
+app.get('/api/work-tasks', authenticateToken, (req: AuthenticatedRequest, res) => {
+  const user = req.user!;
+  // Admins & managers see all or department tasks; employees see their assigned or all accessible tasks
+  let tasks = workTasks;
+  if (user.role === 'EMPLOYEE') {
+    // Show tasks assigned to them or unassigned/general
+    tasks = workTasks.filter(t => t.assignedToId === user.id || t.assignedTo === user.name || t.assignedToId === 'usr-emp-1');
+  }
+  res.json(tasks);
+});
+
+// Create Work Task
+app.post('/api/work-tasks', authenticateToken, (req: AuthenticatedRequest, res) => {
+  const user = req.user!;
+  const { title, description, departmentId, relatedDocId, estimatedMinutes, priority, deadline, recommendedBreakMinutes } = req.body;
+
+  if (!title || typeof title !== 'string') {
+    return res.status(400).json({ error: 'Task title is required' });
+  }
+
+  const dept = departments.find(d => d.id === departmentId) || departments.find(d => d.id === user.departmentId) || departments[0];
+  const doc = documents.find(d => d.id === relatedDocId);
+
+  const newTask: DBWorkTask = {
+    id: 'task-' + Date.now(),
+    title: title.trim(),
+    description: (description || '').trim(),
+    departmentId: dept.id,
+    departmentName: dept.name,
+    relatedDocId: doc ? doc.id : undefined,
+    relatedDocTitle: doc ? doc.title : undefined,
+    estimatedMinutes: Math.max(5, Number(estimatedMinutes) || 30),
+    loggedMinutes: 0,
+    priority: priority && ['Urgent', 'High', 'Medium', 'Low'].includes(priority) ? priority : 'Medium',
+    status: 'Pending',
+    deadline: deadline || new Date(Date.now() + 8 * 3600000).toISOString(),
+    assignedTo: user.name,
+    assignedToId: user.id,
+    recommendedBreakMinutes: Number(recommendedBreakMinutes) || 10,
+    createdAt: new Date().toISOString(),
+  };
+
+  workTasks.unshift(newTask);
+  logAudit(user.id, user.name, user.role, 'WORK_TASK_CREATE', newTask.id, `Created task "${newTask.title}" (${newTask.estimatedMinutes}m estimated)`);
+  res.status(201).json(newTask);
+});
+
+// Update Work Task
+app.put('/api/work-tasks/:id', authenticateToken, (req: AuthenticatedRequest, res) => {
+  const user = req.user!;
+  const taskIndex = workTasks.findIndex(t => t.id === req.params.id);
+  if (taskIndex === -1) {
+    return res.status(404).json({ error: 'Task not found' });
+  }
+
+  const existing = workTasks[taskIndex];
+  const { title, description, status, priority, estimatedMinutes, loggedMinutes, deadline } = req.body;
+
+  const updated: DBWorkTask = {
+    ...existing,
+    title: title !== undefined ? title : existing.title,
+    description: description !== undefined ? description : existing.description,
+    status: status !== undefined ? status : existing.status,
+    priority: priority !== undefined ? priority : existing.priority,
+    estimatedMinutes: estimatedMinutes !== undefined ? Math.max(1, Number(estimatedMinutes)) : existing.estimatedMinutes,
+    loggedMinutes: loggedMinutes !== undefined ? Math.max(0, Number(loggedMinutes)) : existing.loggedMinutes,
+    deadline: deadline !== undefined ? deadline : existing.deadline,
+    completedAt: status === 'Completed' && existing.status !== 'Completed' ? new Date().toISOString() : existing.completedAt,
+  };
+
+  workTasks[taskIndex] = updated;
+  logAudit(user.id, user.name, user.role, 'WORK_TASK_UPDATE', updated.id, `Updated task "${updated.title}" status to ${updated.status}`);
+  res.json(updated);
+});
+
+// Log Work Time
+app.post('/api/work-tasks/:id/log-time', authenticateToken, (req: AuthenticatedRequest, res) => {
+  const user = req.user!;
+  const taskIndex = workTasks.findIndex(t => t.id === req.params.id);
+  if (taskIndex === -1) {
+    return res.status(404).json({ error: 'Task not found' });
+  }
+
+  const existing = workTasks[taskIndex];
+  const minutesToAdd = Number(req.body.minutes) || 0;
+
+  if (minutesToAdd <= 0) {
+    return res.status(400).json({ error: 'Minutes to log must be greater than 0' });
+  }
+
+  const newLogged = existing.loggedMinutes + minutesToAdd;
+  const newStatus = existing.status === 'Pending' ? 'In Progress' : existing.status;
+
+  const updated: DBWorkTask = {
+    ...existing,
+    loggedMinutes: newLogged,
+    status: newStatus,
+  };
+
+  workTasks[taskIndex] = updated;
+  logAudit(user.id, user.name, user.role, 'WORK_TIME_LOGGED', updated.id, `Logged ${minutesToAdd}m on task "${updated.title}" (Total: ${newLogged}m / ${updated.estimatedMinutes}m)`);
+  res.json(updated);
+});
+
+// Delete Work Task
+app.delete('/api/work-tasks/:id', authenticateToken, (req: AuthenticatedRequest, res) => {
+  const user = req.user!;
+  const taskIndex = workTasks.findIndex(t => t.id === req.params.id);
+  if (taskIndex === -1) {
+    return res.status(404).json({ error: 'Task not found' });
+  }
+
+  const removed = workTasks.splice(taskIndex, 1)[0];
+  logAudit(user.id, user.name, user.role, 'WORK_TASK_DELETE', removed.id, `Deleted task "${removed.title}"`);
+  res.json({ success: true, id: removed.id });
+});
+
+// AI Work Time Estimator
+app.post('/api/work-tasks/ai-estimate-time', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  const { title, description, docId } = req.body;
+  if (!title) {
+    return res.status(400).json({ error: 'Title is required for work time estimation' });
+  }
+
+  const doc = documents.find(d => d.id === docId);
+  const gemini = getGeminiClient();
+
+  if (gemini) {
+    try {
+      const prompt = `You are an Enterprise Workforce Productivity and Time Management Architect.
+Calculate the realistic estimated work time required to complete this work item or policy task.
+Task Title: "${title}"
+Task Details: "${description || 'Standard corporate procedure'}"
+Related Document: "${doc ? doc.title : 'None'}"
+Document Sample Content: "${doc ? doc.content.slice(0, 1000) : ''}"
+
+Consider:
+1. Average professional reading speed: 200-250 words per minute.
+2. Cognitive comprehension and checklist audit overhead: 5-10 mins per section.
+3. Verification, signing, or implementation workflow steps.
+4. Mandatory ergonomic break intervals (e.g. 5-10 min break per 45-60 min of focused work).
+
+Return ONLY raw JSON with this schema:
+{
+  "estimatedMinutes": 45,
+  "recommendedBreakMinutes": 10,
+  "difficulty": "Moderate",
+  "reasoning": "2-sentence breakdown of required reading, analysis, and verification steps",
+  "checklistSteps": [
+    "Step 1: Read section on MFA policy (10 mins)",
+    "Step 2: Audit workstation 2FA tokens (20 mins)",
+    "Step 3: Submit verification log (15 mins)"
+  ]
+}`;
+
+      const response = await gemini.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: prompt,
+      });
+
+      const cleaned = (response.text || '').replace(/```json/g, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+      if (parsed.estimatedMinutes) {
+        return res.json(parsed);
+      }
+    } catch (err) {
+      console.error('Gemini work time estimation error:', err);
+    }
+  }
+
+  // Grounded rule-based calculation fallback
+  const wordCount = doc ? doc.content.split(/\s+/).length : (title.length + (description?.length || 0)) * 2;
+  const readingMinutes = Math.ceil(wordCount / 220);
+  const auditStepsMinutes = 20;
+  const total = Math.max(15, Math.min(180, Math.round((readingMinutes + auditStepsMinutes) / 5) * 5));
+  const breakMins = total >= 60 ? 15 : total >= 45 ? 10 : 5;
+
+  return res.json({
+    estimatedMinutes: total,
+    recommendedBreakMinutes: breakMins,
+    difficulty: total > 60 ? 'High' : total > 30 ? 'Moderate' : 'Standard',
+    reasoning: `Based on a ${wordCount}-word enterprise policy and required verification procedures, estimated duration is ${total} minutes with a ${breakMins}-minute ergonomic rest window.`,
+    checklistSteps: [
+      `Review core requirements in ${doc ? doc.title : 'designated policy'} (${Math.max(5, readingMinutes)} mins)`,
+      `Execute procedural audit and compliance checks (${Math.round(total * 0.5)} mins)`,
+      `Document findings and log confirmation status (${Math.round(total * 0.2)} mins)`
+    ]
+  });
 });
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'API endpoint not found' }));

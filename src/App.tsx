@@ -1,6 +1,8 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { WorkTimeProvider } from './context/WorkTimeContext';
+import { WorkTimeAlertBanner } from './components/work/WorkTimeAlertBanner';
 import { MainLayout } from './components/layout/MainLayout';
 import { LandingPage } from './pages/LandingPage';
 import { LoginPage } from './pages/LoginPage';
@@ -15,6 +17,7 @@ import { AnalyticsPage } from './pages/AnalyticsPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { AdminPage } from './pages/AdminPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { WorkTimePage } from './pages/WorkTimePage';
 
 // Protected Route Wrapper
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -41,37 +44,61 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 export function App() {
   return (
     <AuthProvider>
-      <Router>
-        <Routes>
-          {/* Public Routes */}
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
+      <WorkTimeProvider>
+        <Router>
+          <Routes>
+            {/* Public Routes */}
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
 
-          {/* Protected Application Routes */}
-          <Route
-            element={
-              <ProtectedRoute>
-                <MainLayout />
-              </ProtectedRoute>
-            }
-          >
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/assistant" element={<AssistantPage />} />
-            <Route path="/search" element={<SearchPage />} />
-            <Route path="/documents" element={<DocumentsPage />} />
-            <Route path="/departments" element={<DepartmentsPage />} />
-            <Route path="/bookmarks" element={<BookmarksPage />} />
-            <Route path="/analytics" element={<AnalyticsPage />} />
-            <Route path="/activity" element={<ActivityPage />} />
-            <Route path="/admin" element={<AdminPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-          </Route>
+            {/* URL Route Aliases for enterpriseiq.fp.JKKN/dashboard */}
+            <Route path="/enterpriseiq.fp.JKKN/dashboard" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/enterpriseiq.fp.jkkn/dashboard" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/enterpriseiq.fp.JKKN" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/enterpriseiq.fp.jkkn" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/fp.JKKN/dashboard" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/fp.jkkn/dashboard" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/fp.JKKN" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/fp.jkkn" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/EnterpriseIQ jkkn/dashboard" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/EnterpriseIQ%20jkkn/dashboard" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/EnterpriseIQ-jkkn/dashboard" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/enterpriseiq-jkkn/dashboard" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/enterpriseiq/dashboard" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/EnterpriseIQ/dashboard" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/EnterpriseIQ jkkn" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/EnterpriseIQ%20jkkn" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/EnterpriseIQ-jkkn" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/enterpriseiq-jkkn" element={<Navigate to="/dashboard" replace />} />
 
-          {/* Catch-all Fallback */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Router>
+            {/* Protected Application Routes */}
+            <Route
+              element={
+                <ProtectedRoute>
+                  <MainLayout />
+                </ProtectedRoute>
+              }
+            >
+              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/assistant" element={<AssistantPage />} />
+              <Route path="/work-time" element={<WorkTimePage />} />
+              <Route path="/search" element={<SearchPage />} />
+              <Route path="/documents" element={<DocumentsPage />} />
+              <Route path="/departments" element={<DepartmentsPage />} />
+              <Route path="/bookmarks" element={<BookmarksPage />} />
+              <Route path="/analytics" element={<AnalyticsPage />} />
+              <Route path="/activity" element={<ActivityPage />} />
+              <Route path="/admin" element={<AdminPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+            </Route>
+
+            {/* Catch-all Fallback */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+          <WorkTimeAlertBanner />
+        </Router>
+      </WorkTimeProvider>
     </AuthProvider>
   );
 }

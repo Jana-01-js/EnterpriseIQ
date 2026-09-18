@@ -20,15 +20,20 @@ import {
   HelpCircle,
   X,
   ExternalLink,
+  Volume2,
+  VolumeX,
+  Copy,
+  Check,
 } from 'lucide-react';
 
 export const AssistantPage: React.FC = () => {
   const { user, openDocumentViewer } = useAuth();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
 
   const scopedDocIdParam = searchParams.get('docId');
   const scopedTitleParam = searchParams.get('title');
+  const initialQueryParam = searchParams.get('q');
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
@@ -40,6 +45,10 @@ export const AssistantPage: React.FC = () => {
   const [scopedDocTitle, setScopedDocTitle] = useState<string | null>(scopedTitleParam);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [convSearchQuery, setConvSearchQuery] = useState('');
+
+  // Audio / Speech & Copy feedback states
+  const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
 
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
@@ -69,6 +78,16 @@ export const AssistantPage: React.FC = () => {
     }
   }, [scopedDocIdParam, scopedTitleParam]);
 
+  // If navigated from Dashboard with ?q=...
+  useEffect(() => {
+    if (initialQueryParam) {
+      handleSendQuestion(initialQueryParam);
+      const newParams = new URLSearchParams(searchParams);
+      newParams.delete('q');
+      setSearchParams(newParams, { replace: true });
+    }
+  }, [initialQueryParam]);
+
   useEffect(() => {
     if (activeConvId) {
       api.getConversationMessages(activeConvId)
@@ -83,6 +102,15 @@ export const AssistantPage: React.FC = () => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
+  // Clean up speech synthesis if component unmounts
+  useEffect(() => {
+    return () => {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
   const handleStartNewChat = () => {
     setActiveConvId(null);
     setMessages([]);
@@ -96,6 +124,30 @@ export const AssistantPage: React.FC = () => {
       setActiveConvId(null);
       setMessages([]);
     }
+  };
+
+  const handleCopyMessage = (id: string, text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedMsgId(id);
+    setTimeout(() => setCopiedMsgId(null), 2000);
+  };
+
+  const handleToggleSpeech = (id: string, text: string) => {
+    if (!('speechSynthesis' in window)) return;
+
+    if (speakingMsgId === id) {
+      window.speechSynthesis.cancel();
+      setSpeakingMsgId(null);
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.05;
+    utterance.onend = () => setSpeakingMsgId(null);
+    utterance.onerror = () => setSpeakingMsgId(null);
+    setSpeakingMsgId(id);
+    window.speechSynthesis.speak(utterance);
   };
 
   const handleSendQuestion = async (qText?: string) => {
@@ -145,41 +197,47 @@ export const AssistantPage: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col md:flex-row gap-6 h-[calc(100vh-8rem)]">
+    <div className="flex flex-col md:flex-row gap-6 h-[calc(100vh-7.5rem)]">
       
       {/* Sidebar - Conversations History */}
-      <div className="w-full md:w-72 bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-col shrink-0 overflow-hidden">
+      <div className="w-full md:w-80 bg-white/90 backdrop-blur-sm rounded-3xl border border-slate-200/80 shadow-xs flex flex-col shrink-0 overflow-hidden">
         
         {/* Header */}
-        <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <MessageSquare className="w-4 h-4 text-blue-400" />
-            <span className="font-bold text-xs">Chat History</span>
+        <div className="p-4 bg-slate-950 text-white flex items-center justify-between border-b border-slate-800">
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-lg bg-blue-600/30 flex items-center justify-center text-blue-400 border border-blue-500/30">
+              <MessageSquare className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <span className="font-bold text-xs tracking-tight">Chat History</span>
+              <p className="text-[10px] text-slate-400">Enterprise RAG threads</p>
+            </div>
           </div>
           <button
             onClick={handleStartNewChat}
-            className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-1 shadow-xs"
+            className="p-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all shadow-xs flex items-center gap-1 text-[11px] font-bold px-2.5"
+            title="Start new conversation"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>New Chat</span>
+            <span>New</span>
           </button>
         </div>
 
-        {/* Search Chats */}
-        <div className="p-3 border-b border-slate-100 bg-slate-50">
+        {/* Filter Search */}
+        <div className="p-3 border-b border-slate-100 bg-slate-50/50">
           <div className="relative">
-            <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400" />
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
             <input
               type="text"
               value={convSearchQuery}
               onChange={e => setConvSearchQuery(e.target.value)}
-              placeholder="Search previous chats..."
-              className="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="Search conversations..."
+              className="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
             />
           </div>
         </div>
 
-        {/* History List */}
+        {/* List of Previous Sessions */}
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
           {historyLoading ? (
             <div className="p-4 text-center text-xs text-slate-400">Loading history...</div>
@@ -193,10 +251,10 @@ export const AssistantPage: React.FC = () => {
               <div
                 key={conv.id}
                 onClick={() => setActiveConvId(conv.id)}
-                className={`p-3 rounded-xl text-xs cursor-pointer transition-all flex items-center justify-between group ${
+                className={`p-3 rounded-2xl text-xs cursor-pointer transition-all flex items-center justify-between group ${
                   activeConvId === conv.id
-                    ? 'bg-blue-50 text-blue-900 font-bold border border-blue-200'
-                    : 'text-slate-700 hover:bg-slate-100'
+                    ? 'bg-blue-50 text-blue-900 font-bold border border-blue-200 shadow-2xs'
+                    : 'text-slate-700 hover:bg-slate-50 border border-transparent'
                 }`}
               >
                 <div className="flex items-center gap-2 min-w-0 pr-2">
@@ -217,14 +275,14 @@ export const AssistantPage: React.FC = () => {
 
         {/* Bottom Scope Indicator */}
         {scopedDocId && (
-          <div className="p-3 bg-indigo-50 border-t border-indigo-100 text-xs text-indigo-900 flex items-center justify-between">
+          <div className="p-3 bg-blue-50/80 border-t border-blue-200/80 text-xs text-blue-900 flex items-center justify-between">
             <div className="flex items-center gap-2 min-w-0">
-              <FileText className="w-4 h-4 text-indigo-600 shrink-0" />
+              <FileText className="w-4 h-4 text-blue-600 shrink-0" />
               <span className="truncate font-semibold text-[11px]">Scoped: {scopedDocTitle}</span>
             </div>
             <button
               onClick={() => { setScopedDocId(null); setScopedDocTitle(null); }}
-              className="p-1 text-indigo-400 hover:text-indigo-700"
+              className="p-1 text-blue-500 hover:text-blue-800"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -233,23 +291,28 @@ export const AssistantPage: React.FC = () => {
       </div>
 
       {/* Main Chat Area */}
-      <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-col overflow-hidden">
+      <div className="flex-1 bg-white/90 backdrop-blur-sm rounded-3xl border border-slate-200/80 shadow-xs flex flex-col overflow-hidden">
         
         {/* Chat Header */}
-        <div className="p-4 bg-slate-900 text-white border-b border-slate-800 flex items-center justify-between">
+        <div className="p-4 bg-slate-950 text-white border-b border-slate-800 flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-600/30 border border-blue-400/30 rounded-xl text-blue-400">
+            <div className="p-2 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-xl text-white shadow-md shadow-blue-500/20">
               <Bot className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="font-bold text-sm text-white">EnterpriseIQ Knowledge Assistant</h2>
-              <p className="text-[11px] text-slate-400">Retrieval-Augmented Generation Grounded Engine</p>
+              <div className="flex items-center gap-2">
+                <h2 className="font-extrabold text-sm text-white tracking-tight">EnterpriseIQ Knowledge Assistant</h2>
+                <span className="bg-blue-500/20 text-blue-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-blue-400/30">
+                  Gemini 3.8 Flash RAG
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400">Natural language search with grounded source citations</p>
             </div>
           </div>
 
           {/* Scope Selector Dropdown */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-400 hidden sm:inline">Retrieval Scope:</span>
+            <span className="text-xs text-slate-400 hidden sm:inline font-medium">Retrieval Scope:</span>
             <select
               value={scopedDocId || ''}
               onChange={e => {
@@ -258,7 +321,7 @@ export const AssistantPage: React.FC = () => {
                 const d = documents.find(doc => doc.id === val);
                 setScopedDocTitle(d?.title || null);
               }}
-              className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-inner"
             >
               <option value="">All Enterprise Knowledge Documents</option>
               {documents.map(d => (
@@ -271,47 +334,66 @@ export const AssistantPage: React.FC = () => {
         {/* Message Feed */}
         <div className="flex-1 p-6 overflow-y-auto space-y-6">
           {messages.length === 0 ? (
-            <div className="max-w-2xl mx-auto py-12 text-center space-y-6">
-              <div className="w-16 h-16 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 mx-auto shadow-xs">
-                <Sparkles className="w-8 h-8" />
+            <div className="max-w-3xl mx-auto py-10 text-center space-y-6">
+              <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-sky-400 p-0.5 mx-auto shadow-xl shadow-blue-500/20">
+                <div className="w-full h-full bg-white rounded-[22px] flex items-center justify-center text-blue-600">
+                  <Sparkles className="w-8 h-8 text-blue-600" />
+                </div>
               </div>
+
               <div>
-                <h3 className="text-xl font-bold text-slate-900">Ask Your Enterprise Knowledge Base</h3>
-                <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-                  Queries are converted to embeddings, semantically searched against indexed documents, filtered by your role permissions, and answered with grounded sources.
+                <h3 className="text-2xl font-extrabold text-slate-900 tracking-tight">Ask Your Enterprise Knowledge Base</h3>
+                <p className="text-xs sm:text-sm text-slate-500 mt-1 max-w-lg mx-auto leading-relaxed">
+                  Queries are converted to high-dimensional embeddings, semantically searched across indexed corporate policies, and answered with strict citations.
                 </p>
               </div>
 
               {/* Sample Question Chips */}
-              <div className="space-y-2 text-left pt-2">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider text-center">Sample Natural Language Queries</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="space-y-3 text-left pt-2">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest text-center">Suggested Inquiries</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <button
                     onClick={() => handleSendQuestion('What is the company leave policy for annual leave and sick days?')}
-                    className="p-3 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-left text-xs text-slate-800 font-medium transition-colors"
+                    className="p-3.5 bg-white hover:bg-blue-50/60 border border-slate-200/80 hover:border-blue-300 rounded-2xl text-left text-xs text-slate-800 font-medium transition-all shadow-2xs hover:shadow-xs group"
                   >
-                    "What is the company leave policy for annual leave and sick days?"
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-base">🏖️</span>
+                      <span className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors">Annual Leave & PTO</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-snug">"What is the company leave policy for annual leave and sick days?"</p>
                   </button>
 
                   <button
                     onClick={() => handleSendQuestion('What are the password and 2FA cybersecurity requirements?')}
-                    className="p-3 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-left text-xs text-slate-800 font-medium transition-colors"
+                    className="p-3.5 bg-white hover:bg-blue-50/60 border border-slate-200/80 hover:border-blue-300 rounded-2xl text-left text-xs text-slate-800 font-medium transition-all shadow-2xs hover:shadow-xs group"
                   >
-                    "What are the password and 2FA cybersecurity requirements?"
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-base">🛡️</span>
+                      <span className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors">Security & 2FA</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-snug">"What are the password and 2FA cybersecurity requirements?"</p>
                   </button>
 
                   <button
                     onClick={() => handleSendQuestion('Explain the employee onboarding schedule for week 1.')}
-                    className="p-3 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-left text-xs text-slate-800 font-medium transition-colors"
+                    className="p-3.5 bg-white hover:bg-blue-50/60 border border-slate-200/80 hover:border-blue-300 rounded-2xl text-left text-xs text-slate-800 font-medium transition-all shadow-2xs hover:shadow-xs group"
                   >
-                    "Explain the employee onboarding schedule for week 1."
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-base">🚀</span>
+                      <span className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors">Employee Onboarding</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-snug">"Explain the employee onboarding schedule for week 1."</p>
                   </button>
 
                   <button
                     onClick={() => handleSendQuestion('What are the PR review approval requirements in engineering?')}
-                    className="p-3 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-left text-xs text-slate-800 font-medium transition-colors"
+                    className="p-3.5 bg-white hover:bg-blue-50/60 border border-slate-200/80 hover:border-blue-300 rounded-2xl text-left text-xs text-slate-800 font-medium transition-all shadow-2xs hover:shadow-xs group"
                   >
-                    "What are the PR review approval requirements in engineering?"
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-base">💻</span>
+                      <span className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors">Engineering Standards</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-snug">"What are the PR review approval requirements in engineering?"</p>
                   </button>
                 </div>
               </div>
@@ -320,84 +402,120 @@ export const AssistantPage: React.FC = () => {
             messages.map((msg, idx) => (
               <div
                 key={msg.id || idx}
-                className={`flex gap-4 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                className={`flex gap-3.5 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 {msg.sender === 'assistant' && (
-                  <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <div className="w-9 h-9 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-blue-500/20">
                     <Bot className="w-4 h-4" />
                   </div>
                 )}
 
-                <div className={`max-w-3xl space-y-3 ${
+                <div className={`max-w-3xl space-y-3.5 ${
                   msg.sender === 'user'
-                    ? 'bg-blue-600 text-white p-4 rounded-2xl rounded-tr-xs shadow-xs text-xs font-medium'
-                    : 'bg-slate-50 border border-slate-200 p-5 rounded-2xl rounded-tl-xs shadow-xs text-xs text-slate-800'
+                    ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-4.5 rounded-2xl rounded-tr-xs shadow-md shadow-blue-500/15 text-xs font-medium'
+                    : 'bg-white/95 border border-slate-200/90 p-5 rounded-3xl rounded-tl-xs shadow-xs text-xs text-slate-800'
                 }`}>
                   
-                  {/* Confidence Header for Assistant */}
+                  {/* Assistant Header & Actions Toolbar */}
                   {msg.sender === 'assistant' && (
-                    <div className="flex items-center justify-between pb-2 border-b border-slate-200/80 mb-2">
+                    <div className="flex items-center justify-between pb-2.5 border-b border-slate-100 flex-wrap gap-2">
                       <div className="flex items-center gap-2">
                         {getConfidenceBadge(msg.confidence)}
                         {msg.sourceRelevance && (
-                          <span className="text-[11px] font-semibold text-slate-500">
+                          <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
                             Relevance: {msg.sourceRelevance}%
                           </span>
                         )}
                       </div>
-                      <span className="text-[10px] text-slate-400 font-mono">
-                        {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
+
+                      <div className="flex items-center gap-1.5">
+                        {/* Audio Read-Aloud Button */}
+                        <button
+                          onClick={() => handleToggleSpeech(msg.id, msg.content)}
+                          className={`p-1.5 rounded-lg border text-xs font-medium transition-colors flex items-center gap-1 ${
+                            speakingMsgId === msg.id
+                              ? 'bg-blue-600 text-white border-blue-600'
+                              : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200'
+                          }`}
+                          title={speakingMsgId === msg.id ? 'Stop reading' : 'Read answer aloud'}
+                        >
+                          {speakingMsgId === msg.id ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                          <span className="text-[10px] hidden sm:inline">{speakingMsgId === msg.id ? 'Stop' : 'Listen'}</span>
+                        </button>
+
+                        {/* Copy Button */}
+                        <button
+                          onClick={() => handleCopyMessage(msg.id, msg.content)}
+                          className="p-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-lg text-xs font-medium transition-colors flex items-center gap-1"
+                          title="Copy response"
+                        >
+                          {copiedMsgId === msg.id ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-emerald-600" />
+                              <span className="text-[10px] text-emerald-600 font-bold hidden sm:inline">Copied</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3.5 h-3.5" />
+                              <span className="text-[10px] hidden sm:inline">Copy</span>
+                            </>
+                          )}
+                        </button>
+
+                        <span className="text-[10px] text-slate-400 font-mono ml-1">
+                          {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
                     </div>
                   )}
 
                   {/* Message Content */}
-                  <div className="whitespace-pre-wrap leading-relaxed">
+                  <div className="whitespace-pre-wrap leading-relaxed font-normal">
                     {msg.content}
                   </div>
 
                   {/* Knowledge Gap Alert if present */}
                   {msg.knowledgeGapDetected && (
-                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs space-y-1 mt-3">
+                    <div className="p-3 bg-amber-50/80 border border-amber-200/80 rounded-2xl text-amber-900 text-xs space-y-1 mt-3 shadow-2xs">
                       <div className="flex items-center gap-1.5 font-bold">
                         <AlertTriangle className="w-4 h-4 text-amber-600" />
                         Knowledge Gap Detected
                       </div>
                       <p className="text-[11px] text-amber-800">
-                        The requested topic is not covered in the currently indexed documents. Contact an administrator to upload relevant guidelines.
+                        The requested topic is not sufficiently covered in indexed enterprise documents. Contact a department administrator to upload relevant operational guidelines.
                       </p>
                     </div>
                   )}
 
                   {/* Source Citations for RAG */}
                   {user?.preferences?.citations !== false && msg.sources && msg.sources.length > 0 && (
-                    <div className="pt-3 border-t border-slate-200/80 space-y-2">
-                      <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                    <div className="pt-3 border-t border-slate-100 space-y-2">
+                      <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
                         <FileText className="w-3.5 h-3.5 text-blue-600" />
-                        Retrieved Enterprise Sources ({msg.sources.length})
+                        Retrieved Grounded Sources ({msg.sources.length})
                       </p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         {msg.sources.map((src, sIdx) => (
                           <div
                             key={sIdx}
                             onClick={() => openDocumentViewer(src.documentId)}
-                            className="p-2.5 bg-white border border-slate-200 hover:border-blue-400 rounded-xl cursor-pointer transition-all shadow-2xs group"
+                            className="p-3 bg-slate-50/80 hover:bg-blue-50/50 border border-slate-200/80 hover:border-blue-400 rounded-2xl cursor-pointer transition-all shadow-2xs group"
                           >
                             <div className="flex items-center justify-between mb-1">
                               <span className="font-bold text-blue-700 text-xs truncate group-hover:text-blue-800">
                                 📄 {src.documentTitle}
                               </span>
-                              <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-semibold shrink-0">
+                              <span className="text-[10px] bg-white border border-slate-200 text-slate-700 px-1.5 py-0.5 rounded-md font-semibold shrink-0">
                                 Page {src.pageNumber}
                               </span>
                             </div>
-                            <p className="text-[11px] text-slate-500 line-clamp-2 leading-tight">
+                            <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">
                               "{src.snippet}"
                             </p>
-                            <div className="mt-1.5 flex items-center justify-between text-[10px] text-slate-400">
-                              <span>Relevance: {src.relevanceScore}%</span>
+                            <div className="mt-2 flex items-center justify-between text-[10px] text-slate-400">
+                              <span className="font-mono">Relevance: {src.relevanceScore}%</span>
                               <span className="text-blue-600 font-semibold group-hover:underline flex items-center gap-0.5">
-                                View Source <ExternalLink className="w-2.5 h-2.5" />
+                                Preview in Viewer <ExternalLink className="w-2.5 h-2.5" />
                               </span>
                             </div>
                           </div>
@@ -408,14 +526,14 @@ export const AssistantPage: React.FC = () => {
 
                   {/* Suggested Follow-up Questions */}
                   {user?.preferences?.suggestions !== false && msg.suggestedQuestions && msg.suggestedQuestions.length > 0 && (
-                    <div className="pt-3 border-t border-slate-200/80 space-y-1.5">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Suggested Follow-Up Questions</p>
+                    <div className="pt-3 border-t border-slate-100 space-y-2">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Suggested Follow-Up Inquiries</p>
                       <div className="flex flex-wrap gap-1.5">
                         {msg.suggestedQuestions.map((sq, sqIdx) => (
                           <button
                             key={sqIdx}
                             onClick={() => handleSendQuestion(sq)}
-                            className="text-[11px] font-medium bg-blue-50 hover:bg-blue-100 text-blue-700 px-2.5 py-1 rounded-lg border border-blue-200 transition-colors text-left"
+                            className="text-[11px] font-medium bg-blue-50/80 hover:bg-blue-100 text-blue-700 px-3 py-1 rounded-xl border border-blue-200 transition-colors text-left"
                           >
                             💡 {sq}
                           </button>
@@ -430,9 +548,9 @@ export const AssistantPage: React.FC = () => {
           )}
 
           {loading && (
-            <div className="flex items-center gap-3 text-slate-400 text-xs py-2">
-              <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-              <span>Searching vector database & generating grounded AI response...</span>
+            <div className="flex items-center gap-3 text-slate-500 text-xs py-3 px-4 bg-slate-50 rounded-2xl border border-slate-200/60 w-fit">
+              <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+              <span className="font-medium">Searching enterprise vectors & synthesizing grounded answer...</span>
             </div>
           )}
 
@@ -440,7 +558,7 @@ export const AssistantPage: React.FC = () => {
         </div>
 
         {/* Input Bar */}
-        <div className="p-4 bg-slate-50 border-t border-slate-200">
+        <div className="p-4 bg-slate-50/80 border-t border-slate-200/80">
           <form
             onSubmit={e => { e.preventDefault(); handleSendQuestion(); }}
             className="flex items-center gap-3"
@@ -449,13 +567,13 @@ export const AssistantPage: React.FC = () => {
               type="text"
               value={inputQuestion}
               onChange={e => setInputQuestion(e.target.value)}
-              placeholder={scopedDocId ? `Ask a question about "${scopedDocTitle}"...` : "Ask any enterprise policy question..."}
-              className="flex-1 px-4 py-3 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-2xs"
+              placeholder={scopedDocId ? `Ask a question about "${scopedDocTitle}"...` : "Ask any enterprise knowledge or policy question..."}
+              className="flex-1 px-4 py-3 bg-white border border-slate-200 rounded-2xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/80 shadow-xs"
             />
             <button
               type="submit"
               disabled={loading || !inputQuestion.trim()}
-              className="px-5 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-md transition-all disabled:opacity-50 flex items-center gap-2 shrink-0"
+              className="px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs rounded-2xl shadow-md shadow-blue-500/25 transition-all disabled:opacity-50 flex items-center gap-2 shrink-0"
             >
               <span>Ask AI</span>
               <Send className="w-3.5 h-3.5" />

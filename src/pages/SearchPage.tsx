@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
-import { SearchResult, Department } from '../types';
+import { SearchResult, Department, AiSearchOverview } from '../types';
 import {
   Search,
   Filter,
@@ -15,6 +15,10 @@ import {
   Tag,
   Shield,
   X,
+  HelpCircle,
+  ArrowRight,
+  RefreshCw,
+  Bookmark
 } from 'lucide-react';
 
 export const SearchPage: React.FC = () => {
@@ -28,6 +32,10 @@ export const SearchPage: React.FC = () => {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [departments, setDepartments] = useState<Department[]>([]);
+
+  // AI Overview State
+  const [aiOverview, setAiOverview] = useState<AiSearchOverview | null>(null);
+  const [overviewLoading, setOverviewLoading] = useState(false);
 
   // Filter dropdowns
   const [selectedDept, setSelectedDept] = useState('');
@@ -44,6 +52,7 @@ export const SearchPage: React.FC = () => {
   const executeSearch = async (searchQuery: string) => {
     if (!searchQuery.trim()) return;
     setLoading(true);
+    setAiOverview(null);
     try {
       const res = await api.search({
         query: searchQuery.trim(),
@@ -53,10 +62,27 @@ export const SearchPage: React.FC = () => {
       });
       setResults(res);
       setSearchParams({ q: searchQuery.trim() });
+
+      // Automatically trigger AI synthesis overview if we have results
+      if (res.length > 0) {
+        generateAiOverview(searchQuery.trim(), res);
+      }
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const generateAiOverview = async (searchQuery: string, searchResults: SearchResult[]) => {
+    setOverviewLoading(true);
+    try {
+      const overview = await api.getSearchAiOverview(searchQuery, searchResults);
+      setAiOverview(overview);
+    } catch (err) {
+      console.error('Failed to generate search overview:', err);
+    } finally {
+      setOverviewLoading(false);
     }
   };
 
@@ -166,6 +192,103 @@ export const SearchPage: React.FC = () => {
         </div>
       </div>
 
+      {/* AI Search Overview Card */}
+      {(overviewLoading || aiOverview) && (
+        <div className="p-6 bg-gradient-to-br from-indigo-50/90 via-white to-blue-50/70 rounded-2xl border border-indigo-200/80 shadow-xs space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 bg-indigo-600 text-white rounded-lg">
+                <Sparkles className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-indigo-950">Gemini 3.8 Flash AI Synthesis Overview</h3>
+                <p className="text-[11px] text-indigo-600 font-medium">Grounded directly across retrieved enterprise knowledge chunks</p>
+              </div>
+            </div>
+            {aiOverview && (
+              <button
+                onClick={() => generateAiOverview(query, results)}
+                disabled={overviewLoading}
+                className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1 font-medium"
+              >
+                <RefreshCw className={`w-3 h-3 ${overviewLoading ? 'animate-spin' : ''}`} />
+                <span>Regenerate</span>
+              </button>
+            )}
+          </div>
+
+          {overviewLoading ? (
+            <div className="py-4 flex items-center gap-3 text-slate-500 text-xs">
+              <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+              <span>Synthesizing enterprise policies and generating direct answer...</span>
+            </div>
+          ) : aiOverview ? (
+            <div className="space-y-4">
+              {/* Direct answer paragraph */}
+              <p className="text-xs text-slate-800 leading-relaxed font-sans bg-white/80 p-4 rounded-xl border border-indigo-100/80">
+                {aiOverview.summary}
+              </p>
+
+              {/* Key bullet takeaways */}
+              {aiOverview.keyPoints && aiOverview.keyPoints.length > 0 && (
+                <div className="space-y-1.5">
+                  <h4 className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Key Takeaways:</h4>
+                  <ul className="space-y-1">
+                    {aiOverview.keyPoints.map((point, pIdx) => (
+                      <li key={pIdx} className="text-xs text-slate-700 flex items-start gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 mt-1.5 shrink-0"></span>
+                        <span>{point}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Citations badges */}
+              {aiOverview.citations && aiOverview.citations.length > 0 && (
+                <div className="pt-2 border-t border-indigo-100/60 flex items-center gap-2 flex-wrap">
+                  <span className="text-[11px] font-bold text-slate-500">Cited Policies:</span>
+                  {aiOverview.citations.map((cite, cIdx) => (
+                    <button
+                      key={cIdx}
+                      onClick={() => openDocumentViewer(cite.docId)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-medium transition-colors shadow-2xs"
+                    >
+                      <FileText className="w-3 h-3 text-indigo-500" />
+                      <span>{cite.title}</span>
+                      {cite.pageNumber && <span className="text-[10px] text-slate-400">p.{cite.pageNumber}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Follow-up question suggestion chips */}
+              {aiOverview.relatedQueries && aiOverview.relatedQueries.length > 0 && (
+                <div className="pt-2 border-t border-indigo-100/60 flex items-center gap-2 flex-wrap">
+                  <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1">
+                    <HelpCircle className="w-3 h-3 text-slate-400" />
+                    Related Inquiries:
+                  </span>
+                  {aiOverview.relatedQueries.map((sq, sqIdx) => (
+                    <button
+                      key={sqIdx}
+                      onClick={() => {
+                        setQuery(sq);
+                        executeSearch(sq);
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 bg-indigo-50/80 hover:bg-indigo-100 text-indigo-800 border border-indigo-200/60 rounded-full text-[11px] font-medium transition-colors"
+                    >
+                      <span>{sq}</span>
+                      <ArrowRight className="w-2.5 h-2.5 text-indigo-500" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
+      )}
+
       {/* Results Feed */}
       <div className="space-y-4">
         <div className="flex items-center justify-between text-xs text-slate-500 px-1">
@@ -257,3 +380,4 @@ export const SearchPage: React.FC = () => {
     </div>
   );
 };
+
