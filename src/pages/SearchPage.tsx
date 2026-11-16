@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
@@ -7,18 +7,15 @@ import {
   Search,
   Filter,
   FileText,
-  Building2,
   Calendar,
   Sparkles,
   ExternalLink,
   MessageSquare,
-  Tag,
   Shield,
   X,
   HelpCircle,
   ArrowRight,
   RefreshCw,
-  Bookmark
 } from 'lucide-react';
 
 export const SearchPage: React.FC = () => {
@@ -31,7 +28,12 @@ export const SearchPage: React.FC = () => {
   const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [sortBy, setSortBy] = useState<'relevance' | 'newest'>('relevance');
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('eiq_recent_searches') || '[]').slice(0, 5); } catch { return []; }
+  });
 
   // AI Overview State
   const [aiOverview, setAiOverview] = useState<AiSearchOverview | null>(null);
@@ -43,32 +45,41 @@ export const SearchPage: React.FC = () => {
   const [selectedAccessLevel, setSelectedAccessLevel] = useState('');
 
   useEffect(() => {
-    api.getDepartments().then(setDepartments).catch(console.error);
+    api.getDepartments().then(setDepartments).catch(err => setError(err instanceof Error ? err.message : 'Could not load search filters.'));
     if (initialQuery) {
       executeSearch(initialQuery);
     }
   }, []);
 
-  const executeSearch = async (searchQuery: string) => {
+  const executeSearch = async (searchQuery: string, filters?: { departmentId?: string; fileType?: string; accessLevel?: string }) => {
     if (!searchQuery.trim()) return;
     setLoading(true);
+    setError('');
     setAiOverview(null);
     try {
       const res = await api.search({
         query: searchQuery.trim(),
-        departmentId: selectedDept || undefined,
-        fileType: selectedFileType || undefined,
-        accessLevel: selectedAccessLevel || undefined,
+        departmentId: filters ? filters.departmentId : selectedDept || undefined,
+        fileType: filters ? filters.fileType : selectedFileType || undefined,
+        accessLevel: filters ? filters.accessLevel : selectedAccessLevel || undefined,
       });
       setResults(res);
       setSearchParams({ q: searchQuery.trim() });
+      const normalizedQuery = searchQuery.trim();
+      const updatedSearches = [normalizedQuery, ...recentSearches.filter(item => item.toLowerCase() !== normalizedQuery.toLowerCase())].slice(0, 5);
+      setRecentSearches(updatedSearches);
+      try {
+        localStorage.setItem('eiq_recent_searches', JSON.stringify(updatedSearches));
+      } catch {
+        // Search remains usable when browser storage is unavailable.
+      }
 
       // Automatically trigger AI synthesis overview if we have results
       if (res.length > 0) {
-        generateAiOverview(searchQuery.trim(), res);
+        generateAiOverview(normalizedQuery, res);
       }
     } catch (err) {
-      console.error(err);
+      setError(err instanceof Error ? err.message : 'Search is temporarily unavailable.');
     } finally {
       setLoading(false);
     }
@@ -95,8 +106,12 @@ export const SearchPage: React.FC = () => {
     setSelectedDept('');
     setSelectedFileType('');
     setSelectedAccessLevel('');
-    executeSearch(query);
+    executeSearch(query, {});
   };
+
+  const displayedResults = useMemo(() => [...results].sort((a, b) => sortBy === 'newest'
+    ? new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
+    : b.relevanceScore - a.relevanceScore), [results, sortBy]);
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
@@ -132,6 +147,8 @@ export const SearchPage: React.FC = () => {
           </button>
         </form>
 
+        {recentSearches.length > 0 && <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Recent</span>{recentSearches.map(item => <button key={item} onClick={() => { setQuery(item); executeSearch(item); }} className="max-w-48 truncate rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-100">{item}</button>)}<button onClick={() => { setRecentSearches([]); localStorage.removeItem('eiq_recent_searches'); }} className="text-[10px] font-semibold text-slate-400 hover:text-rose-600">Clear</button></div>}
+
         {/* Filter Bar */}
         <div className="pt-3 border-t border-slate-100 flex items-center justify-between flex-wrap gap-3 text-xs">
           <div className="flex items-center gap-3 flex-wrap">
@@ -143,7 +160,7 @@ export const SearchPage: React.FC = () => {
             {/* Department */}
             <select
               value={selectedDept}
-              onChange={e => { setSelectedDept(e.target.value); executeSearch(query); }}
+              onChange={e => { const value = e.target.value; setSelectedDept(value); executeSearch(query, { departmentId: value || undefined, fileType: selectedFileType || undefined, accessLevel: selectedAccessLevel || undefined }); }}
               className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-medium focus:ring-1 focus:ring-blue-500"
             >
               <option value="">All Departments</option>
@@ -155,7 +172,7 @@ export const SearchPage: React.FC = () => {
             {/* File Type */}
             <select
               value={selectedFileType}
-              onChange={e => { setSelectedFileType(e.target.value); executeSearch(query); }}
+              onChange={e => { const value = e.target.value; setSelectedFileType(value); executeSearch(query, { departmentId: selectedDept || undefined, fileType: value || undefined, accessLevel: selectedAccessLevel || undefined }); }}
               className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-medium focus:ring-1 focus:ring-blue-500"
             >
               <option value="">All File Formats</option>
@@ -169,7 +186,7 @@ export const SearchPage: React.FC = () => {
             {/* Access Level */}
             <select
               value={selectedAccessLevel}
-              onChange={e => { setSelectedAccessLevel(e.target.value); executeSearch(query); }}
+              onChange={e => { const value = e.target.value; setSelectedAccessLevel(value); executeSearch(query, { departmentId: selectedDept || undefined, fileType: selectedFileType || undefined, accessLevel: value || undefined }); }}
               className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-medium focus:ring-1 focus:ring-blue-500"
             >
               <option value="">All Access Levels</option>
@@ -191,6 +208,8 @@ export const SearchPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {error && <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">{error}</div>}
 
       {/* AI Search Overview Card */}
       {(overviewLoading || aiOverview) && (
@@ -295,7 +314,7 @@ export const SearchPage: React.FC = () => {
           <span>
             {loading ? 'Performing vector search...' : `Found ${results.length} matching knowledge chunk(s)`}
           </span>
-          {query && <span className="font-mono">Term: "{query}"</span>}
+          <div className="flex items-center gap-2">{query && <span className="hidden font-mono sm:inline">Term: "{query}"</span>}<select aria-label="Sort search results" value={sortBy} onChange={event => setSortBy(event.target.value as 'relevance' | 'newest')} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600"><option value="relevance">Most relevant</option><option value="newest">Newest first</option></select></div>
         </div>
 
         {loading ? (
@@ -312,7 +331,7 @@ export const SearchPage: React.FC = () => {
             </p>
           </div>
         ) : (
-          results.map((res, idx) => (
+          displayedResults.map((res, idx) => (
             <div
               key={idx}
               className="p-5 bg-white rounded-2xl border border-slate-200 shadow-2xs hover:border-blue-300 transition-all space-y-3"
